@@ -315,12 +315,15 @@ const TaskManagement: React.FC = () => {
       title: '操作',
       key: 'action',
       render: (text: string, record: Task) => {
-        const currentUserCanUpdate = user && (
-          user.identity === UserIdentity.ADMIN ||
-          user.identity === UserIdentity.PRODUCTION_SCHEDULER ||
-          record.executor === user.id ||
-          record.production_leader === user.id
-        );
+        const isAdmin = user?.identity === UserIdentity.ADMIN;
+        const isScheduler = user?.identity === UserIdentity.PRODUCTION_SCHEDULER;
+        const isExecutor = user?.id === record.executor;
+        const isProductionLeader = user?.id === record.production_leader;
+
+        // Permissions
+        const canStartOrCompleteTask = isAdmin || isScheduler || isExecutor;
+        // const canAcknowledgeTask = isProductionLeader && !record.acknowledged_by_leader_at;
+        // Deletion permission is handled by canDeleteTask function
 
         return (
           <Space size="small">
@@ -333,7 +336,28 @@ const TaskManagement: React.FC = () => {
               查看
             </Button>
 
-            {currentUserCanUpdate && record.status === TaskStatus.PENDING && (
+            {/* Production Leader: Acknowledge Task */}
+            {isProductionLeader && !record.acknowledged_by_leader_at && record.status !== TaskStatus.CANCELLED && (
+              <Button
+                type="link"
+                size="small"
+                style={{ color: 'green' }}
+                onClick={async () => {
+                  try {
+                    await taskAPI.acknowledgeTask(record.id);
+                    message.success('任务已确认收到');
+                    loadData();
+                  } catch (error) {
+                    message.error('确认收到任务失败');
+                  }
+                }}
+              >
+                确认收到
+              </Button>
+            )}
+
+            {/* Executor or Admin/Scheduler: Start Task */}
+            {canStartOrCompleteTask && record.status === TaskStatus.PENDING && (
               <Button
                 type="link"
                 size="small"
@@ -341,7 +365,7 @@ const TaskManagement: React.FC = () => {
                   try {
                     await taskAPI.updateTaskStatus(record.id, TaskStatus.IN_PROGRESS);
                     message.success('任务已标记为进行中');
-                    loadData(); // Refresh data
+                    loadData();
                   } catch (error) {
                     message.error('操作失败');
                   }
@@ -351,7 +375,8 @@ const TaskManagement: React.FC = () => {
               </Button>
             )}
 
-            {currentUserCanUpdate && record.status === TaskStatus.IN_PROGRESS && (
+            {/* Executor or Admin/Scheduler: Complete Task */}
+            {canStartOrCompleteTask && record.status === TaskStatus.IN_PROGRESS && (
               <Button
                 type="link"
                 size="small"
@@ -359,7 +384,7 @@ const TaskManagement: React.FC = () => {
                   try {
                     await taskAPI.updateTaskStatus(record.id, TaskStatus.COMPLETED);
                     message.success('任务已标记为完成');
-                    loadData(); // Refresh data
+                    loadData();
                   } catch (error) {
                     message.error('操作失败');
                   }
@@ -369,7 +394,8 @@ const TaskManagement: React.FC = () => {
               </Button>
             )}
 
-            {canDeleteTask(record) && (
+            {/* Admin or Scheduler: Delete Task (using existing canDeleteTask) */}
+            {canDeleteTask(record) && ( // canDeleteTask already checks for ADMIN or PRODUCTION_SCHEDULER
               <Popconfirm
                 title="确定删除这个任务吗？"
                 onConfirm={() => handleDeleteTask(record.id)}
@@ -653,6 +679,11 @@ const TaskManagement: React.FC = () => {
                 <Tag color={getTaskTypeColor(selectedTask.type)} style={{ marginLeft: 8 }}>
                   {getTaskTypeText(selectedTask.type)}
                 </Tag>
+                {selectedTask.acknowledged_by_leader_at && (
+                  <Tag color="cyan" style={{ marginLeft: 8 }}>
+                    所领导已确认: {dayjs(selectedTask.acknowledged_by_leader_at).format('YYYY-MM-DD HH:mm')}
+                  </Tag>
+                )}
               </Col>
             </Row>
             <Row gutter={16} style={{ marginBottom: 16 }}>
@@ -719,12 +750,13 @@ const TaskManagement: React.FC = () => {
                 <List
                   dataSource={selectedTask.milestones}
                   renderItem={(milestone: Milestone, index: number) => {
-                    const currentUserCanUpdateMilestone = user && selectedTask && (
-                      user.identity === UserIdentity.ADMIN ||
-                      user.identity === UserIdentity.PRODUCTION_SCHEDULER ||
-                      selectedTask.executor === user.id ||
-                      selectedTask.production_leader === user.id
-                    );
+                    const isAdmin = user?.identity === UserIdentity.ADMIN;
+                    const isScheduler = user?.identity === UserIdentity.PRODUCTION_SCHEDULER;
+                    const isExecutorOfTask = user && selectedTask && user.id === selectedTask.executor;
+
+                    // Permission to complete milestone: Admin, Scheduler, or Executor of the task
+                    const canCompleteMilestone = isAdmin || isScheduler || isExecutorOfTask;
+
                     return (
                       <List.Item>
                         <Card size="small" style={{ width: '100%' }}>
@@ -751,7 +783,7 @@ const TaskManagement: React.FC = () => {
                               <Tag color={getMilestoneStatusColor(milestone.status)}>
                                 {getMilestoneStatusText(milestone.status)}
                               </Tag>
-                              {currentUserCanUpdateMilestone && milestone.status !== MilestoneStatus.COMPLETED && milestone.id && (
+                              {canCompleteMilestone && milestone.status !== MilestoneStatus.COMPLETED && milestone.id && (
                                 <Button
                                   type="link"
                                   size="small"
@@ -787,14 +819,35 @@ const TaskManagement: React.FC = () => {
 
             <Divider />
             {/* Task Action Buttons in Modal */}
-            { user && selectedTask && (
-                user.identity === UserIdentity.ADMIN ||
-                user.identity === UserIdentity.PRODUCTION_SCHEDULER ||
-                selectedTask.executor === user.id ||
-                selectedTask.production_leader === user.id
-              ) && (
+            {user && selectedTask && (
               <Space style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
-                {selectedTask.status === TaskStatus.PENDING && (
+                {/* Production Leader: Acknowledge Task */}
+                {user.identity === UserIdentity.PRODUCTION_LEADER &&
+                  user.id === selectedTask.production_leader &&
+                  !selectedTask.acknowledged_by_leader_at &&
+                  selectedTask.status !== TaskStatus.CANCELLED && (
+                  <Button
+                    style={{ borderColor: 'green', color: 'green' }}
+                    onClick={async () => {
+                      try {
+                        const updated = await taskAPI.acknowledgeTask(selectedTask.id);
+                        setSelectedTask(updated.task);
+                        message.success('任务已确认收到');
+                        loadData(); // Refresh list
+                      } catch (error) {
+                        message.error('确认收到任务失败');
+                      }
+                    }}
+                  >
+                    确认收到任务
+                  </Button>
+                )}
+
+                {/* Executor or Admin/Scheduler: Start Task */}
+                {(user.identity === UserIdentity.ADMIN ||
+                  user.identity === UserIdentity.PRODUCTION_SCHEDULER ||
+                  user.id === selectedTask.executor) &&
+                  selectedTask.status === TaskStatus.PENDING && (
                   <Button
                     onClick={async () => {
                       try {

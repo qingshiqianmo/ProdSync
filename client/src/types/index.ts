@@ -78,6 +78,7 @@ export interface Task {
   planned_end_date: string;
   actual_start_date?: string;
   actual_end_date?: string;
+  acknowledged_by_leader_at?: string; // New field
   created_at: string;
   updated_at: string;
   created_by_name?: string;

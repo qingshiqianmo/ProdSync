@@ -350,13 +350,35 @@ app.put('/api/tasks/:id/status', authenticateToken, async (req, res) => {
     }
     const currentUser = await dbGet('SELECT identity FROM users_v3 WHERE id = ?', [userId]);
 
-    const canUpdate = currentUser.identity === IDENTITIES.ADMIN ||
-                      currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER ||
-                      task.executor === userId ||
-                      task.production_leader === userId;
+    // New Permission Logic: Only executor or admin/scheduler can change status to IN_PROGRESS or COMPLETED
+    let canUpdateStatus = false;
+    if (currentUser.identity === IDENTITIES.ADMIN || currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER) {
+      canUpdateStatus = true;
+    } else if (task.executor === userId && (status === TASK_STATUS.IN_PROGRESS || status === TASK_STATUS.COMPLETED)) {
+      canUpdateStatus = true;
+    } else if (task.executor === userId && (status === TASK_STATUS.PENDING || status === TASK_STATUS.CANCELLED)) {
+      // Allow executor to change to pending or cancelled as well, if needed by business logic.
+      // For now, primary focus is on IN_PROGRESS and COMPLETED.
+      // If other statuses are allowed for executor, this condition needs adjustment.
+      // Assuming for now only IN_PROGRESS and COMPLETED are primary actions by executor.
+      // To be more restrictive: only allow executor to move to IN_PROGRESS and COMPLETED.
+      // Let's stick to: executor can only move to IN_PROGRESS and COMPLETED.
+      // Admins/Schedulers can set any valid status.
+      canUpdateStatus = (status === TASK_STATUS.IN_PROGRESS || status === TASK_STATUS.COMPLETED);
+    }
+    // If status is PENDING or CANCELLED, and user is ADMIN or SCHEDULER, it's already true.
+    // If user is executor, they should only be able to move to IN_PROGRESS or COMPLETED.
 
-    if (!canUpdate) {
-      return res.status(403).json({ message: '权限不足，无法更新此任务状态' });
+    if (currentUser.identity === IDENTITIES.ADMIN || currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER) {
+        // Admins and Schedulers can set any valid status
+    } else if (task.executor === userId) {
+        // Executors can only set status to IN_PROGRESS or COMPLETED
+        if (status !== TASK_STATUS.IN_PROGRESS && status !== TASK_STATUS.COMPLETED) {
+            return res.status(403).json({ message: '执行人只能将任务标记为进行中或已完成' });
+        }
+    } else {
+        // Others (like production_leader if not executor) cannot change status
+        return res.status(403).json({ message: '权限不足，无法更新此任务状态' });
     }
 
     let updateFields = 'status = ?, updated_at = CURRENT_TIMESTAMP';
@@ -591,6 +613,34 @@ app.delete('/api/milestones/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ message: '删除里程碑失败' });
   }
 });
+
+// 生产所领导确认收到任务
+app.put('/api/tasks/:id/acknowledge', authenticateToken, async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    const userId = req.user.userId;
+
+    const task = await dbGet('SELECT production_leader FROM tasks_v3 WHERE id = ?', [taskId]);
+    if (!task) {
+      return res.status(404).json({ message: '任务不存在' });
+    }
+
+    if (task.production_leader !== userId) {
+      return res.status(403).json({ message: '权限不足，只有指定的生产所领导可以确认收到任务' });
+    }
+
+    const now = new Date().toISOString(); // Full ISO string, or .split('T')[0] for just date
+    await dbRun('UPDATE tasks_v3 SET acknowledged_by_leader_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [now, taskId]);
+
+    const updatedTask = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
+    res.json({ message: '任务已成功确认为收到', task: updatedTask });
+
+  } catch (error) {
+    console.error('确认收到任务错误:', error);
+    res.status(500).json({ message: '确认收到任务失败' });
+  }
+});
+
 
 // 初始化数据库并启动服务器
 const startServer = async () => {

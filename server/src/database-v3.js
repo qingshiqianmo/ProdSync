@@ -75,6 +75,7 @@ const initDatabaseV3 = () => {
       planned_end_date DATE NOT NULL,
       actual_start_date DATE,
       actual_end_date DATE,
+      acknowledged_by_leader_at DATETIME, -- New field for leader acknowledgement
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (created_by) REFERENCES users_v3(id),

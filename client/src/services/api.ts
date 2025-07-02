@@ -155,6 +155,11 @@ export const taskAPI = {
     const response = await api.put(`/tasks/${id}/status`, payload);
     return response.data; // Backend now returns { message: string, task: Task }
   },
+
+  acknowledgeTask: async (taskId: number): Promise<{ message: string; task: Task }> => {
+    const response = await api.put(`/tasks/${taskId}/acknowledge`);
+    return response.data; // Backend returns { message: string, task: Task }
+  },
 };
 
 // 项目相关API

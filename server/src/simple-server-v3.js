@@ -507,15 +507,25 @@ app.put('/api/milestones/:id/status', authenticateToken, async (req, res) => {
     if (!task) {
       return res.status(404).json({ message: '关联的任务不存在' });
     }
-    const currentUser = await dbGet('SELECT identity FROM users_v3 WHERE id = ?', [userId]);
+    const currentUser = await dbGet('SELECT id, identity FROM users_v3 WHERE id = ?', [userId]);
+    console.log(`[UPD MS] Current user for permission check: ${JSON.stringify(currentUser)}`);
+    console.log(`[UPD MS] Task details for permission check: ${JSON.stringify(task)}`);
 
-    const canUpdate = currentUser.identity === IDENTITIES.ADMIN ||
-                      currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER ||
-                      task.executor === userId ||
-                      task.production_leader === userId;
 
-    if (!canUpdate) {
-      return res.status(403).json({ message: '权限不足，无法更新此里程碑状态' });
+    // New Permission Logic: Only executor of the task or admin/scheduler can complete a milestone
+    if (currentUser.identity === IDENTITIES.ADMIN || currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER) {
+        // Admins and Schedulers can update milestone status
+        console.log(`[UPD MS] Authorized as Admin/Scheduler. User ID: ${userId}`);
+    } else if (task.executor === userId) {
+        // Executor can update status (typically to COMPLETED or other valid execution states)
+        console.log(`[UPD MS] Authorized as Task Executor. User ID: ${userId}, Task Executor ID: ${task.executor}`);
+        if (!Object.values(MILESTONE_STATUS).includes(status)) {
+             console.log(`[UPD MS] Executor ${userId} attempted to set invalid status: ${status} for milestone ${milestoneId}`);
+             return res.status(403).json({ message: '执行人设置的里程碑状态无效' });
+        }
+    } else {
+        console.log(`[UPD MS] Permission Denied. User ${userId} (Identity: ${currentUser.identity}) is not Admin, Scheduler, or Executor (${task.executor}) for task ${task.id} of milestone ${milestoneId}.`);
+        return res.status(403).json({ message: '权限不足，无法更新此里程碑状态' });
     }
     
     let updateQuery = 'UPDATE milestones SET status = ?, updated_at = CURRENT_TIMESTAMP';
@@ -601,24 +611,30 @@ app.put('/api/tasks/:id/acknowledge', authenticateToken, async (req, res) => {
   try {
     const taskId = req.params.id;
     const userId = req.user.userId;
+    console.log(`[ACK TASK /api/tasks/${taskId}/acknowledge] User ID: ${userId} attempting to acknowledge.`);
 
-    const task = await dbGet('SELECT production_leader FROM tasks_v3 WHERE id = ?', [taskId]);
+    const task = await dbGet('SELECT id, production_leader FROM tasks_v3 WHERE id = ?', [taskId]);
     if (!task) {
+      console.log(`[ACK TASK] Task not found for ID: ${taskId}`);
       return res.status(404).json({ message: '任务不存在' });
     }
+    console.log(`[ACK TASK] Task found: ${JSON.stringify(task)}. Expected leader ID: ${task.production_leader}`);
 
     if (task.production_leader !== userId) {
+      console.log(`[ACK TASK] Permission denied. Task leader ID ${task.production_leader} does not match user ID ${userId}.`);
       return res.status(403).json({ message: '权限不足，只有指定的生产所领导可以确认收到任务' });
     }
 
-    const now = new Date().toISOString(); // Full ISO string, or .split('T')[0] for just date
+    const now = new Date().toISOString();
+    console.log(`[ACK TASK] Attempting to update task ${taskId} with acknowledged_by_leader_at = ${now}`);
     await dbRun('UPDATE tasks_v3 SET acknowledged_by_leader_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [now, taskId]);
 
     const updatedTask = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
+    console.log(`[ACK TASK] Task ${taskId} acknowledged successfully. Updated task: ${JSON.stringify(updatedTask)}`);
     res.json({ message: '任务已成功确认为收到', task: updatedTask });
 
   } catch (error) {
-    console.error('确认收到任务错误:', error);
+    console.error(`[ACK TASK ERROR /api/tasks/${req.params.id}/acknowledge]`, error);
     res.status(500).json({ message: '确认收到任务失败' });
   }
 });

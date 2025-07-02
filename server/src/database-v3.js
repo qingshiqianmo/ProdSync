@@ -124,52 +124,52 @@ const insertInitialDataV3 = async () => {
     console.log('管理员账号已存在');
   }
 
-  // 插入一些示例任务数据
-  console.log('插入初始任务数据...');
-  try {
-    const sampleTasks = [
-      {
-        name: '周例会',
-        description: '每周定期工作汇报会议',
-        type: 'meeting',
-        created_by: 1,
-        executor: 1,
-        planned_start_date: '2024-01-15',
-        planned_end_date: '2024-01-15'
-      },
-      {
-        name: '新产品设计项目',
-        description: '开发新一代产品的设计工作',
-        type: 'project',
-        created_by: 1,
-        executor: 1,
-        planned_start_date: '2024-01-10',
-        planned_end_date: '2024-03-10'
-      },
-      {
-        name: '办公设备维护',
-        description: '定期检查和维护办公设备',
-        type: 'miscellaneous',
-        created_by: 1,
-        executor: 1,
-        planned_start_date: '2024-01-08',
-        planned_end_date: '2024-01-12'
-      }
-    ];
+  // 插入一些示例任务数据 - 已注释掉，以防止每次重启都添加
+  // console.log('插入初始任务数据...');
+  // try {
+  //   const sampleTasks = [
+  //     {
+  //       name: '周例会',
+  //       description: '每周定期工作汇报会议',
+  //       type: 'meeting',
+  //       created_by: 1,
+  //       executor: 1,
+  //       planned_start_date: '2024-01-15',
+  //       planned_end_date: '2024-01-15'
+  //     },
+  //     {
+  //       name: '新产品设计项目',
+  //       description: '开发新一代产品的设计工作',
+  //       type: 'project',
+  //       created_by: 1,
+  //       executor: 1,
+  //       planned_start_date: '2024-01-10',
+  //       planned_end_date: '2024-03-10'
+  //     },
+  //     {
+  //       name: '办公设备维护',
+  //       description: '定期检查和维护办公设备',
+  //       type: 'miscellaneous',
+  //       created_by: 1,
+  //       executor: 1,
+  //       planned_start_date: '2024-01-08',
+  //       planned_end_date: '2024-01-12'
+  //     }
+  //   ];
 
-    for (const task of sampleTasks) {
-      db.prepare(`
-        INSERT OR IGNORE INTO tasks_v3 (name, description, type, created_by, executor, planned_start_date, planned_end_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(task.name, task.description, task.type, task.created_by, task.executor, task.planned_start_date, task.planned_end_date);
-    }
+  //   for (const task of sampleTasks) {
+  //     db.prepare(`
+  //       INSERT OR IGNORE INTO tasks_v3 (name, description, type, created_by, executor, planned_start_date, planned_end_date)
+  //       VALUES (?, ?, ?, ?, ?, ?, ?)
+  //     `).run(task.name, task.description, task.type, task.created_by, task.executor, task.planned_start_date, task.planned_end_date);
+  //   }
     
-    console.log('初始任务数据插入完成');
-  } catch (error) {
-    console.error('插入任务数据错误:', error);
-  }
+  //   console.log('初始任务数据插入完成');
+  // } catch (error) {
+  //   console.error('插入任务数据错误:', error);
+  // }
 
-  console.log('初始数据插入完成（V3版本）！');
+  console.log('初始数据插入完成（V3版本），示例任务已禁用自动插入。');
 };
 
 // 数据库迁移到V3

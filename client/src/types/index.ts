@@ -58,7 +58,7 @@ export interface Milestone {
   description: string;
   planned_date: string;
   actual_completion_date?: string; // Renamed from actual_date
-  status: string; // Should align with MilestoneStatus enum
+  status: MilestoneStatus; // Changed to use MilestoneStatus enum
   order_index: number;
   created_at?: string;
   updated_at?: string;

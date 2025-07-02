@@ -4,6 +4,7 @@ import {
   User, 
   Task, 
   Project,
+  Milestone, // Added Milestone import
   CreateTaskRequest, 
   CreateProjectRequest,
   CreateMilestoneRequest, 

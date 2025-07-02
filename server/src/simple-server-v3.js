@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { migrateToV3, dbGet, dbAll, dbRun, IDENTITIES, TASK_TYPES, TASK_STATUS, MILESTONE_STATUS } = require('./database-v3');
@@ -7,10 +8,44 @@ const { migrateToV3, dbGet, dbAll, dbRun, IDENTITIES, TASK_TYPES, TASK_STATUS, M
 const app = express();
 const PORT = process.env.PORT || 5001;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// CORS配置 - 云端部署优化
+const corsOptions = {
+  origin: function (origin, callback) {
+    // 允许的域名
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:5000', 
+      'http://localhost:5001',
+      process.env.CLIENT_URL,
+      process.env.RENDER_EXTERNAL_URL,
+      process.env.RAILWAY_STATIC_URL
+    ].filter(Boolean);
+
+    // 生产环境允许同源请求，开发环境允许所有
+    if (NODE_ENV === 'development' || !origin) {
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+      callback(null, true);
+    } else {
+      callback(null, true); // 暂时允许所有来源，便于云端部署测试
+    }
+  },
+  credentials: true
+};
 
 // 中间件
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
+
+// 云端部署：提供静态文件服务
+if (NODE_ENV === 'production') {
+  // 静态文件服务 (React构建文件)
+  app.use(express.static(path.join(__dirname, '../../client/build')));
+}
 
 // JWT认证中间件
 const authenticateToken = (req, res, next) => {
@@ -639,26 +674,69 @@ app.put('/api/tasks/:id/acknowledge', authenticateToken, async (req, res) => {
   }
 });
 
+// 云端部署：为前端SPA提供路由支持
+if (NODE_ENV === 'production') {
+  // 所有非API路由都返回React应用的index.html
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../../client/build', 'index.html'));
+  });
+}
+
 
 // 初始化数据库并启动服务器
 const startServer = async () => {
   try {
-    console.log('初始化数据库V3...');
+    console.log('🔧 初始化数据库V3...');
     await migrateToV3();
-    console.log('数据库V3初始化完成！');
+    console.log('✅ 数据库V3初始化完成！');
 
-    app.listen(PORT, () => {
+    // 云端部署优化：监听所有网络接口
+    const host = NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
+    
+    const server = app.listen(PORT, host, () => {
       console.log('=================================');
-      console.log('🚀 生产项目管理系统服务器已启动 (V3)');
+      console.log('🚀 ProdSync 系统启动成功! (V3-Cloud)');
       console.log(`📍 端口: ${PORT}`);
-      console.log(`🌐 健康检查: http://localhost:${PORT}/health`);
-      console.log('新功能: 纯任务管理系统（无项目层级）');
+      console.log(`🌐 环境: ${NODE_ENV}`);
+      console.log(`🔗 健康检查: http://${host === '0.0.0.0' ? 'your-domain' : 'localhost'}:${PORT}/health`);
+      if (NODE_ENV === 'production') {
+        console.log('☁️  云端部署模式');
+      } else {
+        console.log('💻 本地开发模式');
+      }
       console.log('=================================');
     });
+
+    // 优雅关闭处理
+    const gracefulShutdown = (signal) => {
+      console.log(`\n收到 ${signal} 信号，正在优雅关闭服务器...`);
+      server.close((err) => {
+        if (err) {
+          console.error('关闭服务器时出错:', err);
+          process.exit(1);
+        }
+        console.log('✅ 服务器已安全关闭');
+        process.exit(0);
+      });
+      
+      // 强制关闭超时
+      setTimeout(() => {
+        console.error('❌ 强制关闭服务器 (超时)');
+        process.exit(1);
+      }, 10000);
+    };
+
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
   } catch (error) {
-    console.error('启动服务器失败:', error);
+    console.error('❌ 启动服务器失败:', error);
     process.exit(1);
   }
 };
 
-startServer(); 
+// 启动服务器
+startServer();
+
+// 导出app以供其他文件使用
+module.exports = app; 

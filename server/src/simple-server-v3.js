@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { migrateToV3, dbGet, dbAll, dbRun, IDENTITIES, TASK_TYPES, TASK_STATUS } = require('./database-v3');
+const { migrateToV3, dbGet, dbAll, dbRun, IDENTITIES, TASK_TYPES, TASK_STATUS, MILESTONE_STATUS } = require('./database-v3');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -335,16 +335,68 @@ app.get('/api/tasks/:id', authenticateToken, async (req, res) => {
 // 更新任务状态
 app.put('/api/tasks/:id/status', authenticateToken, async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, actual_start_date, actual_end_date } = req.body;
     const taskId = req.params.id;
-    
+    const userId = req.user.userId;
+
     if (!Object.values(TASK_STATUS).includes(status)) {
       return res.status(400).json({ message: '无效的任务状态' });
     }
+
+    // 权限检查：确保操作者是任务的执行人、生产所领导或管理员/调度员
+    const task = await dbGet('SELECT executor, production_leader, created_by FROM tasks_v3 WHERE id = ?', [taskId]);
+    if (!task) {
+      return res.status(404).json({ message: '任务不存在' });
+    }
+    const currentUser = await dbGet('SELECT identity FROM users_v3 WHERE id = ?', [userId]);
+
+    const canUpdate = currentUser.identity === IDENTITIES.ADMIN ||
+                      currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER ||
+                      task.executor === userId ||
+                      task.production_leader === userId;
+
+    if (!canUpdate) {
+      return res.status(403).json({ message: '权限不足，无法更新此任务状态' });
+    }
+
+    let updateFields = 'status = ?, updated_at = CURRENT_TIMESTAMP';
+    let params = [status];
+
+    const now = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+
+    if (status === TASK_STATUS.IN_PROGRESS) {
+      // 如果提供了 actual_start_date，则使用它，否则检查是否已存在，不存在则设为当前日期
+      if (actual_start_date) {
+        updateFields += ', actual_start_date = ?';
+        params.push(actual_start_date);
+      } else {
+        const existingTask = await dbGet('SELECT actual_start_date FROM tasks_v3 WHERE id = ?', [taskId]);
+        if (!existingTask.actual_start_date) {
+          updateFields += ', actual_start_date = ?';
+          params.push(now);
+        }
+      }
+    } else if (status === TASK_STATUS.COMPLETED) {
+      // 如果提供了 actual_end_date，则使用它，否则设为当前日期
+      updateFields += ', actual_end_date = ?';
+      params.push(actual_end_date || now);
+
+      // 如果任务完成时还没有实际开始时间，也一并记录
+      const existingTask = await dbGet('SELECT actual_start_date FROM tasks_v3 WHERE id = ?', [taskId]);
+      if (!existingTask.actual_start_date) {
+          updateFields += ', actual_start_date = ?';
+          params.push(actual_start_date || now); // if completed, start is also now or provided
+      }
+    }
+
+    params.push(taskId);
     
-    await dbRun('UPDATE tasks_v3 SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [status, taskId]);
+    await dbRun(`UPDATE tasks_v3 SET ${updateFields} WHERE id = ?`, params);
     
-    res.json({ message: '任务状态更新成功' });
+    // 获取更新后的任务信息返回
+    const updatedTask = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
+    res.json({ message: '任务状态更新成功', task: updatedTask });
+
   } catch (error) {
     console.error('更新任务状态错误:', error);
     res.status(500).json({ message: '更新任务状态失败' });
@@ -433,28 +485,56 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
 // 更新里程碑状态
 app.put('/api/milestones/:id/status', authenticateToken, async (req, res) => {
   try {
-    const { status, actual_date } = req.body;
+    const { status, actual_completion_date } = req.body; // Renamed actual_date to actual_completion_date
     const milestoneId = req.params.id;
-    
-    const validStatuses = ['pending', 'in_progress', 'completed', 'delayed'];
-    if (!validStatuses.includes(status)) {
+    const userId = req.user.userId;
+
+    if (!Object.values(MILESTONE_STATUS).includes(status)) {
       return res.status(400).json({ message: '无效的里程碑状态' });
+    }
+
+    // 权限检查：获取里程碑关联的任务，然后检查用户是否有权限操作该任务
+    const milestone = await dbGet('SELECT task_id FROM milestones WHERE id = ?', [milestoneId]);
+    if (!milestone) {
+      return res.status(404).json({ message: '里程碑不存在' });
+    }
+
+    const task = await dbGet('SELECT executor, production_leader, created_by FROM tasks_v3 WHERE id = ?', [milestone.task_id]);
+    if (!task) {
+      return res.status(404).json({ message: '关联的任务不存在' });
+    }
+    const currentUser = await dbGet('SELECT identity FROM users_v3 WHERE id = ?', [userId]);
+
+    const canUpdate = currentUser.identity === IDENTITIES.ADMIN ||
+                      currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER ||
+                      task.executor === userId ||
+                      task.production_leader === userId;
+
+    if (!canUpdate) {
+      return res.status(403).json({ message: '权限不足，无法更新此里程碑状态' });
     }
     
     let updateQuery = 'UPDATE milestones SET status = ?, updated_at = CURRENT_TIMESTAMP';
-    let params = [status];
+    let queryParams = [status];
+    const now = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
     
-    if (status === 'completed' && actual_date) {
-      updateQuery += ', actual_date = ?';
-      params.push(actual_date);
+    if (status === MILESTONE_STATUS.COMPLETED) {
+      updateQuery += ', actual_completion_date = ?';
+      queryParams.push(actual_completion_date || now); // Use provided date or now if completed
+    } else {
+      // If status is changed to something else from completed, clear actual_completion_date
+      // updateQuery += ', actual_completion_date = NULL';
+      // Or, let it remain, depending on desired logic. For now, only set on completion.
     }
     
     updateQuery += ' WHERE id = ?';
-    params.push(milestoneId);
+    queryParams.push(milestoneId);
     
-    await dbRun(updateQuery, params);
-    
-    res.json({ message: '里程碑状态更新成功' });
+    await dbRun(updateQuery, queryParams);
+
+    const updatedMilestone = await dbGet('SELECT * FROM milestones WHERE id = ?', [milestoneId]);
+    res.json({ message: '里程碑状态更新成功', milestone: updatedMilestone });
+
   } catch (error) {
     console.error('更新里程碑状态错误:', error);
     res.status(500).json({ message: '更新里程碑状态失败' });

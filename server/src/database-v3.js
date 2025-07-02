@@ -28,6 +28,15 @@ const TASK_STATUS = {
   IN_PROGRESS: 'in_progress',
   COMPLETED: 'completed',
   CANCELLED: 'cancelled'
+  // DELAYED can be a computed status rather than a stored one
+};
+
+// 里程碑状态常量
+const MILESTONE_STATUS = {
+  PENDING: 'pending',
+  IN_PROGRESS: 'in_progress',
+  COMPLETED: 'completed',
+  DELAYED: 'delayed' // Explicitly storing delayed for milestones if needed for specific queries or UI
 };
 
 // 数据库初始化V3版本
@@ -50,6 +59,7 @@ const initDatabaseV3 = () => {
   `);
 
   // 创建任务表V3 - 支持两级分配：生产所负责人和执行人
+  // actual_start_date and actual_end_date already exist.
   db.exec(`
     CREATE TABLE IF NOT EXISTS tasks_v3 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,7 +84,25 @@ const initDatabaseV3 = () => {
     )
   `);
 
-  console.log('数据库V3表结构创建完成');
+  // 创建里程碑表 (Milestones Table) - if not already present from other scripts
+  // Assuming 'milestones' table might be created by 'create-milestone-table.js' or similar.
+  // For safety, we define it here with IF NOT EXISTS, including new fields.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS milestones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      planned_date DATE NOT NULL,
+      actual_completion_date DATE,
+      status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'delayed')),
+      order_index INTEGER, -- To maintain order of milestones for a task
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (task_id) REFERENCES tasks_v3(id) ON DELETE CASCADE
+    )
+  `);
+  console.log('数据库V3表结构创建/验证完成');
 };
 
 // 插入初始数据V3
@@ -176,5 +204,6 @@ module.exports = {
   dbRun,
   IDENTITIES,
   TASK_TYPES,
-  TASK_STATUS
+  TASK_STATUS,
+  MILESTONE_STATUS
 }; 

@@ -30,7 +30,7 @@ import {
 } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
 import { taskAPI, authAPI } from '../services/api';
-import { Task, User, UserIdentity, TaskType, TaskStatus, CreateTaskRequest } from '../types';
+import { Task, User, UserIdentity, TaskType, TaskStatus, CreateTaskRequest, MilestoneStatus } from '../types'; // Added MilestoneStatus
 import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 
@@ -40,14 +40,14 @@ const { RangePicker } = DatePicker;
 const { TabPane } = Tabs;
 const { Text } = Typography;
 
-// 里程碑类型定义
+// 里程碑类型定义 (与 types/index.ts 中的 Milestone 保持一致或类似)
 interface Milestone {
   id?: number;
   name: string;
   description: string;
   planned_date: string;
-  actual_date?: string;
-  status: string;
+  actual_completion_date?: string; // 与 types/index.ts 一致
+  status: MilestoneStatus; // Changed to use MilestoneStatus enum
   order_index: number;
 }
 
@@ -134,22 +134,22 @@ const TaskManagement: React.FC = () => {
     }
   };
 
-  const getMilestoneStatusColor = (status: string) => {
+  const getMilestoneStatusColor = (status: MilestoneStatus) => {
     switch (status) {
-      case 'pending': return 'default';
-      case 'in_progress': return 'processing';
-      case 'completed': return 'success';
-      case 'delayed': return 'error';
+      case MilestoneStatus.PENDING: return 'default';
+      case MilestoneStatus.IN_PROGRESS: return 'processing';
+      case MilestoneStatus.COMPLETED: return 'success';
+      case MilestoneStatus.DELAYED: return 'error';
       default: return 'default';
     }
   };
 
-  const getMilestoneStatusText = (status: string) => {
+  const getMilestoneStatusText = (status: MilestoneStatus) => {
     switch (status) {
-      case 'pending': return '待开始';
-      case 'in_progress': return '进行中';
-      case 'completed': return '已完成';
-      case 'delayed': return '延期';
+      case MilestoneStatus.PENDING: return '待开始';
+      case MilestoneStatus.IN_PROGRESS: return '进行中';
+      case MilestoneStatus.COMPLETED: return '已完成';
+      case MilestoneStatus.DELAYED: return '延期';
       default: return status;
     }
   };
@@ -159,7 +159,7 @@ const TaskManagement: React.FC = () => {
       name: '',
       description: '',
       planned_date: '',
-      status: 'pending',
+      status: MilestoneStatus.PENDING, // Use enum
       order_index: milestones.length + 1
     };
     setMilestones([...milestones, newMilestone]);
@@ -300,38 +300,95 @@ const TaskManagement: React.FC = () => {
       render: (date: string) => dayjs(date).format('YYYY-MM-DD'),
     },
     {
+      title: '实际开始',
+      dataIndex: 'actual_start_date',
+      key: 'actual_start_date',
+      render: (date?: string) => date ? dayjs(date).format('YYYY-MM-DD') : '-',
+    },
+    {
+      title: '实际结束',
+      dataIndex: 'actual_end_date',
+      key: 'actual_end_date',
+      render: (date?: string) => date ? dayjs(date).format('YYYY-MM-DD') : '-',
+    },
+    {
       title: '操作',
       key: 'action',
-      render: (text: string, record: Task) => (
-        <Space size="small">
-          <Button 
-            type="link" 
-            icon={<EyeOutlined />}
-            onClick={() => openDetailModal(record)}
-            size="small"
-          >
-            查看
-          </Button>
-          
-          {canDeleteTask(record) && (
-            <Popconfirm
-              title="确定删除这个任务吗？"
-              onConfirm={() => handleDeleteTask(record.id)}
-              okText="确定"
-              cancelText="取消"
+      render: (text: string, record: Task) => {
+        const currentUserCanUpdate = user && (
+          user.identity === UserIdentity.ADMIN ||
+          user.identity === UserIdentity.PRODUCTION_SCHEDULER ||
+          record.executor === user.id ||
+          record.production_leader === user.id
+        );
+
+        return (
+          <Space size="small">
+            <Button
+              type="link"
+              icon={<EyeOutlined />}
+              onClick={() => openDetailModal(record)}
+              size="small"
             >
-              <Button 
-                type="link" 
-                danger
-                icon={<DeleteOutlined />}
+              查看
+            </Button>
+
+            {currentUserCanUpdate && record.status === TaskStatus.PENDING && (
+              <Button
+                type="link"
                 size="small"
+                onClick={async () => {
+                  try {
+                    await taskAPI.updateTaskStatus(record.id, TaskStatus.IN_PROGRESS);
+                    message.success('任务已标记为进行中');
+                    loadData(); // Refresh data
+                  } catch (error) {
+                    message.error('操作失败');
+                  }
+                }}
               >
-                删除
+                开始任务
               </Button>
-            </Popconfirm>
-          )}
-        </Space>
-      ),
+            )}
+
+            {currentUserCanUpdate && record.status === TaskStatus.IN_PROGRESS && (
+              <Button
+                type="link"
+                size="small"
+                onClick={async () => {
+                  try {
+                    await taskAPI.updateTaskStatus(record.id, TaskStatus.COMPLETED);
+                    message.success('任务已标记为完成');
+                    loadData(); // Refresh data
+                  } catch (error) {
+                    message.error('操作失败');
+                  }
+                }}
+              >
+                完成任务
+              </Button>
+            )}
+
+            {canDeleteTask(record) && (
+              <Popconfirm
+                title="确定删除这个任务吗？"
+                onConfirm={() => handleDeleteTask(record.id)}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button
+                  type="link"
+                  danger
+                  icon={<DeleteOutlined />}
+                  size="small"
+                >
+                  删除
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -656,47 +713,120 @@ const TaskManagement: React.FC = () => {
             </Row>
 
             {/* 里程碑信息 */}
-            {(selectedTask as any).milestones && (selectedTask as any).milestones.length > 0 && (
+            {selectedTask.milestones && selectedTask.milestones.length > 0 && (
               <>
                 <Divider>里程碑节点</Divider>
                 <List
-                  dataSource={(selectedTask as any).milestones}
-                  renderItem={(milestone: any, index: number) => (
-                    <List.Item>
-                      <Card size="small" style={{ width: '100%' }}>
-                        <Row gutter={16}>
-                          <Col span={18}>
-                            <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
-                              {index + 1}. {milestone.name}
-                            </div>
-                            {milestone.description && (
-                              <div style={{ color: '#666', marginBottom: 8 }}>
-                                {milestone.description}
+                  dataSource={selectedTask.milestones}
+                  renderItem={(milestone: Milestone, index: number) => {
+                    const currentUserCanUpdateMilestone = user && selectedTask && (
+                      user.identity === UserIdentity.ADMIN ||
+                      user.identity === UserIdentity.PRODUCTION_SCHEDULER ||
+                      selectedTask.executor === user.id ||
+                      selectedTask.production_leader === user.id
+                    );
+                    return (
+                      <List.Item>
+                        <Card size="small" style={{ width: '100%' }}>
+                          <Row gutter={16} align="middle">
+                            <Col flex="auto">
+                              <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
+                                {index + 1}. {milestone.name}
                               </div>
-                            )}
-                            <div style={{ fontSize: '12px', color: '#666' }}>
-                              计划时间：{dayjs(milestone.planned_date).format('YYYY-MM-DD')}
-                              {milestone.actual_date && (
-                                <span style={{ marginLeft: 16 }}>
-                                  实际时间：{dayjs(milestone.actual_date).format('YYYY-MM-DD')}
-                                </span>
+                              {milestone.description && (
+                                <div style={{ color: '#666', marginBottom: 8, fontSize: '12px' }}>
+                                  {milestone.description}
+                                </div>
                               )}
-                            </div>
-                          </Col>
-                          <Col span={6} style={{ textAlign: 'right' }}>
-                            <Tag color={getMilestoneStatusColor(milestone.status)}>
-                              {getMilestoneStatusText(milestone.status)}
-                            </Tag>
-                          </Col>
-                        </Row>
-                      </Card>
-                    </List.Item>
-                  )}
+                              <div style={{ fontSize: '12px', color: '#666' }}>
+                                计划时间：{dayjs(milestone.planned_date).format('YYYY-MM-DD')}
+                                {milestone.actual_completion_date && (
+                                  <span style={{ marginLeft: 16 }}>
+                                    实际完成：{dayjs(milestone.actual_completion_date).format('YYYY-MM-DD')}
+                                  </span>
+                                )}
+                              </div>
+                            </Col>
+                            <Col flex="120px" style={{ textAlign: 'right' }}>
+                              <Tag color={getMilestoneStatusColor(milestone.status)}>
+                                {getMilestoneStatusText(milestone.status)}
+                              </Tag>
+                              {currentUserCanUpdateMilestone && milestone.status !== MilestoneStatus.COMPLETED && milestone.id && (
+                                <Button
+                                  type="link"
+                                  size="small"
+                                  style={{ marginTop: 4, display: 'block', marginLeft: 'auto' }}
+                                  onClick={async () => {
+                                    try {
+                                      await taskAPI.updateMilestoneStatus(milestone.id!, {
+                                        status: MilestoneStatus.COMPLETED, // Use MilestoneStatus enum
+                                        actual_completion_date: dayjs().format('YYYY-MM-DD'),
+                                      });
+                                      message.success('里程碑已标记为完成');
+                                      // Refresh task details
+                                      const updatedTaskDetail = await taskAPI.getTask(selectedTask.id);
+                                      setSelectedTask(updatedTaskDetail);
+                                      loadData(); // Also refresh the main task list
+                                    } catch (error) {
+                                      message.error('操作失败');
+                                    }
+                                  }}
+                                >
+                                  完成节点
+                                </Button>
+                              )}
+                            </Col>
+                          </Row>
+                        </Card>
+                      </List.Item>
+                    );
+                  }}
                 />
               </>
             )}
+
+            <Divider />
+            {/* Task Action Buttons in Modal */}
+            { user && selectedTask && (
+                user.identity === UserIdentity.ADMIN ||
+                user.identity === UserIdentity.PRODUCTION_SCHEDULER ||
+                selectedTask.executor === user.id ||
+                selectedTask.production_leader === user.id
+              ) && (
+              <Space style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+                {selectedTask.status === TaskStatus.PENDING && (
+                  <Button
+                    onClick={async () => {
+                      try {
+                        const updated = await taskAPI.updateTaskStatus(selectedTask.id, TaskStatus.IN_PROGRESS);
+                        setSelectedTask(updated.task);
+                        message.success('任务已标记为进行中');
+                        loadData();
+                      } catch (error) { message.error('操作失败'); }
+                    }}
+                  >
+                    开始任务
+                  </Button>
+                )}
+                {selectedTask.status === TaskStatus.IN_PROGRESS && (
+                  <Button
+                    type="primary"
+                    onClick={async () => {
+                      try {
+                        const updated = await taskAPI.updateTaskStatus(selectedTask.id, TaskStatus.COMPLETED);
+                        setSelectedTask(updated.task);
+                        message.success('任务已标记为完成');
+                        loadData();
+                      } catch (error) { message.error('操作失败'); }
+                    }}
+                  >
+                    完成任务
+                  </Button>
+                )}
+              </Space>
+            )}
             
-            <Row gutter={16} style={{ marginTop: 16 }}>
+            <Row gutter={16} style={{ marginTop: 24 }}>
               <Col span={12}>
                 <strong>创建时间：</strong>{dayjs(selectedTask.created_at).format('YYYY-MM-DD HH:mm:ss')}
               </Col>

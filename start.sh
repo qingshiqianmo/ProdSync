@@ -14,8 +14,8 @@ npm run install-all
 
 echo
 echo "启动开发服务器..."
-echo "前端: http://localhost:3000"
-echo "后端: http://localhost:3001"
+echo "前端: http://localhost:5000"
+echo "后端: http://localhost:5001"
 echo "默认账户: admin / admin123"
 echo
 

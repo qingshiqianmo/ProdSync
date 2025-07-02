@@ -5,15 +5,15 @@ echo 生产项目管理系统 V3 (支持里程碑)
 echo ================================
 
 echo 正在检查并停止现有服务...
-echo 检查端口3001（后端）...
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":3001" ^| find "LISTENING"') do (
-  echo 停止端口3001上的进程 %%a
+echo 检查端口5001（后端）...
+for /f "tokens=5" %%a in ('netstat -aon ^| find ":5001" ^| find "LISTENING"') do (
+  echo 停止端口5001上的进程 %%a
   taskkill /F /PID %%a 2>nul
 )
 
-echo 检查端口3000（前端）...
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":3000" ^| find "LISTENING"') do (
-  echo 停止端口3000上的进程 %%a
+echo 检查端口5000（前端）...
+for /f "tokens=5" %%a in ('netstat -aon ^| find ":5000" ^| find "LISTENING"') do (
+  echo 停止端口5000上的进程 %%a
   taskkill /F /PID %%a 2>nul
 )
 
@@ -35,9 +35,9 @@ timeout /t 8 /nobreak > nul
 echo ================================
 echo 系统启动成功！
 echo ================================
-echo 前端地址: http://localhost:3000
-echo 后端地址: http://localhost:3001  
-echo 健康检查: http://localhost:3001/health
+echo 前端地址: http://localhost:5000
+echo 后端地址: http://localhost:5001  
+echo 健康检查: http://localhost:5001/health
 echo ================================
 echo 登录账号（密码统一：test123）:
 echo 系统管理员:    admin / admin123

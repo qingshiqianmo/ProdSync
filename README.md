@@ -68,15 +68,15 @@ cd ../client && npm install
 npm run dev
 
 # 或者分别启动
-npm run server  # 后端 (端口 3001)
-npm run client  # 前端 (端口 3000)
+npm run server  # 后端 (端口 5001)
+npm run client  # 前端 (端口 5000)
 ```
 
 ### 访问应用
 
-- 前端: http://localhost:3000
-- 后端API: http://localhost:3001
-- 健康检查: http://localhost:3001/health
+- 前端: http://localhost:5000
+- 后端API: http://localhost:5001
+- 健康检查: http://localhost:5001/health
 
 ### 默认账户
 
@@ -143,12 +143,12 @@ cd server && npm run build
 
 ```env
 # 后端
-PORT=3001
+PORT=5001
 JWT_SECRET=your-secret-key
-CLIENT_URL=http://localhost:3000
+CLIENT_URL=http://localhost:5000
 
 # 前端
-REACT_APP_API_URL=http://localhost:3001/api
+REACT_APP_API_URL=http://localhost:5001/api
 ```
 
 ## 开发指南

@@ -20,16 +20,16 @@ if not errorlevel 1 (
 
 echo.
 echo 检查端口占用...
-echo 检查端口3001（后端）...
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":3001" ^| find "LISTENING"') do (
-    echo 停止端口3001上的进程 %%a
-    taskkill /F /PID %%a 2>nul
+echo 检查端口5001（后端）...
+for /f "tokens=5" %%a in ('netstat -aon ^| find ":5001" ^| find "LISTENING"') do (
+  echo 停止端口5001上的进程 %%a
+  taskkill /F /PID %%a 2>nul
 )
 
-echo 检查端口3000（前端）...
-for /f "tokens=5" %%a in ('netstat -aon ^| find ":3000" ^| find "LISTENING"') do (
-    echo 停止端口3000上的进程 %%a
-    taskkill /F /PID %%a 2>nul
+echo 检查端口5000（前端）...
+for /f "tokens=5" %%a in ('netstat -aon ^| find ":5000" ^| find "LISTENING"') do (
+  echo 停止端口5000上的进程 %%a
+  taskkill /F /PID %%a 2>nul
 )
 
 echo.

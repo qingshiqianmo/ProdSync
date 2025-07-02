@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const BASE_URL = 'http://localhost:3001';
+const BASE_URL = 'http://localhost:5001';
 
 // 测试里程碑功能
 const testMilestones = async () => {

@@ -42,7 +42,7 @@ echo 启动后端服务...
 pm2 start server/src/simple-server-v3.js --name prodsync-backend --env production
 
 echo 启动前端服务（静态文件服务器）...
-pm2 serve client/build 3000 --name prodsync-frontend --spa
+pm2 serve client/build 5000 --name prodsync-frontend --spa
 
 echo.
 echo 6. 保存PM2配置
@@ -52,8 +52,8 @@ pm2 startup
 echo ================================
 echo 生产环境部署完成！
 echo ================================
-echo 后端服务: http://localhost:3001
-echo 前端服务: http://localhost:3000
+echo 后端服务: http://localhost:5001
+echo 前端服务: http://localhost:5000
 echo ================================
 echo PM2管理命令:
 echo pm2 list                    - 查看所有进程

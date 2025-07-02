@@ -4,6 +4,7 @@ import {
   User, 
   Task, 
   Project,
+  Milestone, // Added Milestone import
   CreateTaskRequest, 
   CreateProjectRequest,
   CreateMilestoneRequest, 
@@ -122,9 +123,10 @@ export const taskAPI = {
     return response.data;
   },
 
-  updateMilestone: async (taskId: number, milestoneId: number, milestoneData: UpdateMilestoneRequest): Promise<ApiResponse> => {
-    const response = await api.put(`/tasks/${taskId}/milestones/${milestoneId}`, milestoneData);
-    return response.data;
+  // Changed to update only status and actual_completion_date, and to call the correct backend endpoint
+  updateMilestoneStatus: async (milestoneId: number, data: UpdateMilestoneRequest): Promise<{ message: string; milestone: Milestone }> => {
+    const response = await api.put(`/milestones/${milestoneId}/status`, data);
+    return response.data; // Backend now returns { message: string, milestone: Milestone }
   },
 
   updateTask: async (id: number, taskData: Partial<CreateTaskRequest>): Promise<ApiResponse> => {
@@ -137,9 +139,26 @@ export const taskAPI = {
     return response.data;
   },
 
-  updateTaskStatus: async (id: number, status: string): Promise<ApiResponse> => {
-    const response = await api.put(`/tasks/${id}/status`, { status });
-    return response.data;
+  updateTaskStatus: async (
+    id: number,
+    status: string,
+    actual_start_date?: string,
+    actual_end_date?: string
+  ): Promise<{ message: string; task: Task }> => {
+    const payload: { status: string; actual_start_date?: string; actual_end_date?: string } = { status };
+    if (actual_start_date) {
+      payload.actual_start_date = actual_start_date;
+    }
+    if (actual_end_date) {
+      payload.actual_end_date = actual_end_date;
+    }
+    const response = await api.put(`/tasks/${id}/status`, payload);
+    return response.data; // Backend now returns { message: string, task: Task }
+  },
+
+  acknowledgeTask: async (taskId: number): Promise<{ message: string; task: Task }> => {
+    const response = await api.put(`/tasks/${taskId}/acknowledge`);
+    return response.data; // Backend returns { message: string, task: Task }
   },
 };
 

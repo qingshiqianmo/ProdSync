@@ -28,6 +28,15 @@ const TASK_STATUS = {
   IN_PROGRESS: 'in_progress',
   COMPLETED: 'completed',
   CANCELLED: 'cancelled'
+  // DELAYED can be a computed status rather than a stored one
+};
+
+// 里程碑状态常量
+const MILESTONE_STATUS = {
+  PENDING: 'pending',
+  IN_PROGRESS: 'in_progress',
+  COMPLETED: 'completed',
+  DELAYED: 'delayed' // Explicitly storing delayed for milestones if needed for specific queries or UI
 };
 
 // 数据库初始化V3版本
@@ -50,6 +59,7 @@ const initDatabaseV3 = () => {
   `);
 
   // 创建任务表V3 - 支持两级分配：生产所负责人和执行人
+  // actual_start_date and actual_end_date already exist.
   db.exec(`
     CREATE TABLE IF NOT EXISTS tasks_v3 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,6 +75,7 @@ const initDatabaseV3 = () => {
       planned_end_date DATE NOT NULL,
       actual_start_date DATE,
       actual_end_date DATE,
+      acknowledged_by_leader_at DATETIME, -- New field for leader acknowledgement
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (created_by) REFERENCES users_v3(id),
@@ -74,7 +85,25 @@ const initDatabaseV3 = () => {
     )
   `);
 
-  console.log('数据库V3表结构创建完成');
+  // 创建里程碑表 (Milestones Table) - if not already present from other scripts
+  // Assuming 'milestones' table might be created by 'create-milestone-table.js' or similar.
+  // For safety, we define it here with IF NOT EXISTS, including new fields.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS milestones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      planned_date DATE NOT NULL,
+      actual_completion_date DATE,
+      status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'delayed')),
+      order_index INTEGER, -- To maintain order of milestones for a task
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (task_id) REFERENCES tasks_v3(id) ON DELETE CASCADE
+    )
+  `);
+  console.log('数据库V3表结构创建/验证完成');
 };
 
 // 插入初始数据V3
@@ -95,52 +124,52 @@ const insertInitialDataV3 = async () => {
     console.log('管理员账号已存在');
   }
 
-  // 插入一些示例任务数据
-  console.log('插入初始任务数据...');
-  try {
-    const sampleTasks = [
-      {
-        name: '周例会',
-        description: '每周定期工作汇报会议',
-        type: 'meeting',
-        created_by: 1,
-        executor: 1,
-        planned_start_date: '2024-01-15',
-        planned_end_date: '2024-01-15'
-      },
-      {
-        name: '新产品设计项目',
-        description: '开发新一代产品的设计工作',
-        type: 'project',
-        created_by: 1,
-        executor: 1,
-        planned_start_date: '2024-01-10',
-        planned_end_date: '2024-03-10'
-      },
-      {
-        name: '办公设备维护',
-        description: '定期检查和维护办公设备',
-        type: 'miscellaneous',
-        created_by: 1,
-        executor: 1,
-        planned_start_date: '2024-01-08',
-        planned_end_date: '2024-01-12'
-      }
-    ];
+  // 插入一些示例任务数据 - 已注释掉，以防止每次重启都添加
+  // console.log('插入初始任务数据...');
+  // try {
+  //   const sampleTasks = [
+  //     {
+  //       name: '周例会',
+  //       description: '每周定期工作汇报会议',
+  //       type: 'meeting',
+  //       created_by: 1,
+  //       executor: 1,
+  //       planned_start_date: '2024-01-15',
+  //       planned_end_date: '2024-01-15'
+  //     },
+  //     {
+  //       name: '新产品设计项目',
+  //       description: '开发新一代产品的设计工作',
+  //       type: 'project',
+  //       created_by: 1,
+  //       executor: 1,
+  //       planned_start_date: '2024-01-10',
+  //       planned_end_date: '2024-03-10'
+  //     },
+  //     {
+  //       name: '办公设备维护',
+  //       description: '定期检查和维护办公设备',
+  //       type: 'miscellaneous',
+  //       created_by: 1,
+  //       executor: 1,
+  //       planned_start_date: '2024-01-08',
+  //       planned_end_date: '2024-01-12'
+  //     }
+  //   ];
 
-    for (const task of sampleTasks) {
-      db.prepare(`
-        INSERT OR IGNORE INTO tasks_v3 (name, description, type, created_by, executor, planned_start_date, planned_end_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(task.name, task.description, task.type, task.created_by, task.executor, task.planned_start_date, task.planned_end_date);
-    }
+  //   for (const task of sampleTasks) {
+  //     db.prepare(`
+  //       INSERT OR IGNORE INTO tasks_v3 (name, description, type, created_by, executor, planned_start_date, planned_end_date)
+  //       VALUES (?, ?, ?, ?, ?, ?, ?)
+  //     `).run(task.name, task.description, task.type, task.created_by, task.executor, task.planned_start_date, task.planned_end_date);
+  //   }
     
-    console.log('初始任务数据插入完成');
-  } catch (error) {
-    console.error('插入任务数据错误:', error);
-  }
+  //   console.log('初始任务数据插入完成');
+  // } catch (error) {
+  //   console.error('插入任务数据错误:', error);
+  // }
 
-  console.log('初始数据插入完成（V3版本）！');
+  console.log('初始数据插入完成（V3版本），示例任务已禁用自动插入。');
 };
 
 // 数据库迁移到V3
@@ -176,5 +205,6 @@ module.exports = {
   dbRun,
   IDENTITIES,
   TASK_TYPES,
-  TASK_STATUS
+  TASK_STATUS,
+  MILESTONE_STATUS
 }; 

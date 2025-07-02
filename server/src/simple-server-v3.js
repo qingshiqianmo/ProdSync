@@ -1,16 +1,51 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { migrateToV3, dbGet, dbAll, dbRun, IDENTITIES, TASK_TYPES, TASK_STATUS } = require('./database-v3');
+const { migrateToV3, dbGet, dbAll, dbRun, IDENTITIES, TASK_TYPES, TASK_STATUS, MILESTONE_STATUS } = require('./database-v3');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// CORS配置 - 云端部署优化
+const corsOptions = {
+  origin: function (origin, callback) {
+    // 允许的域名
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:5000', 
+      'http://localhost:5001',
+      process.env.CLIENT_URL,
+      process.env.RENDER_EXTERNAL_URL,
+      process.env.RAILWAY_STATIC_URL
+    ].filter(Boolean);
+
+    // 生产环境允许同源请求，开发环境允许所有
+    if (NODE_ENV === 'development' || !origin) {
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+      callback(null, true);
+    } else {
+      callback(null, true); // 暂时允许所有来源，便于云端部署测试
+    }
+  },
+  credentials: true
+};
 
 // 中间件
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
+
+// 云端部署：提供静态文件服务
+if (NODE_ENV === 'production') {
+  // 静态文件服务 (React构建文件)
+  app.use(express.static(path.join(__dirname, '../../client/build')));
+}
 
 // JWT认证中间件
 const authenticateToken = (req, res, next) => {
@@ -335,16 +370,72 @@ app.get('/api/tasks/:id', authenticateToken, async (req, res) => {
 // 更新任务状态
 app.put('/api/tasks/:id/status', authenticateToken, async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, actual_start_date, actual_end_date } = req.body;
     const taskId = req.params.id;
-    
+    const userId = req.user.userId;
+
     if (!Object.values(TASK_STATUS).includes(status)) {
       return res.status(400).json({ message: '无效的任务状态' });
     }
+
+    // 权限检查：确保操作者是任务的执行人、生产所领导或管理员/调度员
+    const task = await dbGet('SELECT executor, production_leader, created_by FROM tasks_v3 WHERE id = ?', [taskId]);
+    if (!task) {
+      return res.status(404).json({ message: '任务不存在' });
+    }
+    const currentUser = await dbGet('SELECT identity FROM users_v3 WHERE id = ?', [userId]);
+
+    // Permission Check:
+    if (currentUser.identity === IDENTITIES.ADMIN || currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER) {
+        // Admins and Schedulers can set any valid status.
+    } else if (task.executor === userId) {
+        // Executors can only set status to IN_PROGRESS or COMPLETED
+        if (status !== TASK_STATUS.IN_PROGRESS && status !== TASK_STATUS.COMPLETED) {
+            return res.status(403).json({ message: '执行人只能将任务标记为进行中或已完成' });
+        }
+    } else {
+        // Others (like production_leader if not executor) cannot change status
+        return res.status(403).json({ message: '权限不足，无法更新此任务状态' });
+    }
+
+    let updateFields = 'status = ?, updated_at = CURRENT_TIMESTAMP';
+    let params = [status];
+
+    const now = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+
+    if (status === TASK_STATUS.IN_PROGRESS) {
+      // 如果提供了 actual_start_date，则使用它，否则检查是否已存在，不存在则设为当前日期
+      if (actual_start_date) {
+        updateFields += ', actual_start_date = ?';
+        params.push(actual_start_date);
+      } else {
+        const existingTask = await dbGet('SELECT actual_start_date FROM tasks_v3 WHERE id = ?', [taskId]);
+        if (!existingTask.actual_start_date) {
+          updateFields += ', actual_start_date = ?';
+          params.push(now);
+        }
+      }
+    } else if (status === TASK_STATUS.COMPLETED) {
+      // 如果提供了 actual_end_date，则使用它，否则设为当前日期
+      updateFields += ', actual_end_date = ?';
+      params.push(actual_end_date || now);
+
+      // 如果任务完成时还没有实际开始时间，也一并记录
+      const existingTask = await dbGet('SELECT actual_start_date FROM tasks_v3 WHERE id = ?', [taskId]);
+      if (!existingTask.actual_start_date) {
+          updateFields += ', actual_start_date = ?';
+          params.push(actual_start_date || now); // if completed, start is also now or provided
+      }
+    }
+
+    params.push(taskId);
     
-    await dbRun('UPDATE tasks_v3 SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [status, taskId]);
+    await dbRun(`UPDATE tasks_v3 SET ${updateFields} WHERE id = ?`, params);
     
-    res.json({ message: '任务状态更新成功' });
+    // 获取更新后的任务信息返回
+    const updatedTask = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
+    res.json({ message: '任务状态更新成功', task: updatedTask });
+
   } catch (error) {
     console.error('更新任务状态错误:', error);
     res.status(500).json({ message: '更新任务状态失败' });
@@ -433,28 +524,66 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
 // 更新里程碑状态
 app.put('/api/milestones/:id/status', authenticateToken, async (req, res) => {
   try {
-    const { status, actual_date } = req.body;
+    const { status, actual_completion_date } = req.body; // Renamed actual_date to actual_completion_date
     const milestoneId = req.params.id;
-    
-    const validStatuses = ['pending', 'in_progress', 'completed', 'delayed'];
-    if (!validStatuses.includes(status)) {
+    const userId = req.user.userId;
+
+    if (!Object.values(MILESTONE_STATUS).includes(status)) {
       return res.status(400).json({ message: '无效的里程碑状态' });
+    }
+
+    // 权限检查：获取里程碑关联的任务，然后检查用户是否有权限操作该任务
+    const milestone = await dbGet('SELECT task_id FROM milestones WHERE id = ?', [milestoneId]);
+    if (!milestone) {
+      return res.status(404).json({ message: '里程碑不存在' });
+    }
+
+    const task = await dbGet('SELECT executor, production_leader, created_by FROM tasks_v3 WHERE id = ?', [milestone.task_id]);
+    if (!task) {
+      return res.status(404).json({ message: '关联的任务不存在' });
+    }
+    const currentUser = await dbGet('SELECT id, identity FROM users_v3 WHERE id = ?', [userId]);
+    console.log(`[UPD MS] Current user for permission check: ${JSON.stringify(currentUser)}`);
+    console.log(`[UPD MS] Task details for permission check: ${JSON.stringify(task)}`);
+
+
+    // New Permission Logic: Only executor of the task or admin/scheduler can complete a milestone
+    if (currentUser.identity === IDENTITIES.ADMIN || currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER) {
+        // Admins and Schedulers can update milestone status
+        console.log(`[UPD MS] Authorized as Admin/Scheduler. User ID: ${userId}`);
+    } else if (task.executor === userId) {
+        // Executor can update status (typically to COMPLETED or other valid execution states)
+        console.log(`[UPD MS] Authorized as Task Executor. User ID: ${userId}, Task Executor ID: ${task.executor}`);
+        if (!Object.values(MILESTONE_STATUS).includes(status)) {
+             console.log(`[UPD MS] Executor ${userId} attempted to set invalid status: ${status} for milestone ${milestoneId}`);
+             return res.status(403).json({ message: '执行人设置的里程碑状态无效' });
+        }
+    } else {
+        console.log(`[UPD MS] Permission Denied. User ${userId} (Identity: ${currentUser.identity}) is not Admin, Scheduler, or Executor (${task.executor}) for task ${task.id} of milestone ${milestoneId}.`);
+        return res.status(403).json({ message: '权限不足，无法更新此里程碑状态' });
     }
     
     let updateQuery = 'UPDATE milestones SET status = ?, updated_at = CURRENT_TIMESTAMP';
-    let params = [status];
+    let queryParams = [status];
+    const now = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
     
-    if (status === 'completed' && actual_date) {
-      updateQuery += ', actual_date = ?';
-      params.push(actual_date);
+    if (status === MILESTONE_STATUS.COMPLETED) {
+      updateQuery += ', actual_completion_date = ?';
+      queryParams.push(actual_completion_date || now); // Use provided date or now if completed
+    } else {
+      // If status is changed to something else from completed, clear actual_completion_date
+      // updateQuery += ', actual_completion_date = NULL';
+      // Or, let it remain, depending on desired logic. For now, only set on completion.
     }
     
     updateQuery += ' WHERE id = ?';
-    params.push(milestoneId);
+    queryParams.push(milestoneId);
     
-    await dbRun(updateQuery, params);
-    
-    res.json({ message: '里程碑状态更新成功' });
+    await dbRun(updateQuery, queryParams);
+
+    const updatedMilestone = await dbGet('SELECT * FROM milestones WHERE id = ?', [milestoneId]);
+    res.json({ message: '里程碑状态更新成功', milestone: updatedMilestone });
+
   } catch (error) {
     console.error('更新里程碑状态错误:', error);
     res.status(500).json({ message: '更新里程碑状态失败' });
@@ -512,25 +641,102 @@ app.delete('/api/milestones/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// 生产所领导确认收到任务
+app.put('/api/tasks/:id/acknowledge', authenticateToken, async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    const userId = req.user.userId;
+    console.log(`[ACK TASK /api/tasks/${taskId}/acknowledge] User ID: ${userId} attempting to acknowledge.`);
+
+    const task = await dbGet('SELECT id, production_leader FROM tasks_v3 WHERE id = ?', [taskId]);
+    if (!task) {
+      console.log(`[ACK TASK] Task not found for ID: ${taskId}`);
+      return res.status(404).json({ message: '任务不存在' });
+    }
+    console.log(`[ACK TASK] Task found: ${JSON.stringify(task)}. Expected leader ID: ${task.production_leader}`);
+
+    if (task.production_leader !== userId) {
+      console.log(`[ACK TASK] Permission denied. Task leader ID ${task.production_leader} does not match user ID ${userId}.`);
+      return res.status(403).json({ message: '权限不足，只有指定的生产所领导可以确认收到任务' });
+    }
+
+    const now = new Date().toISOString();
+    console.log(`[ACK TASK] Attempting to update task ${taskId} with acknowledged_by_leader_at = ${now}`);
+    await dbRun('UPDATE tasks_v3 SET acknowledged_by_leader_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [now, taskId]);
+
+    const updatedTask = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
+    console.log(`[ACK TASK] Task ${taskId} acknowledged successfully. Updated task: ${JSON.stringify(updatedTask)}`);
+    res.json({ message: '任务已成功确认为收到', task: updatedTask });
+
+  } catch (error) {
+    console.error(`[ACK TASK ERROR /api/tasks/${req.params.id}/acknowledge]`, error);
+    res.status(500).json({ message: '确认收到任务失败' });
+  }
+});
+
+// 云端部署：为前端SPA提供路由支持
+if (NODE_ENV === 'production') {
+  // 所有非API路由都返回React应用的index.html
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../../client/build', 'index.html'));
+  });
+}
+
+
 // 初始化数据库并启动服务器
 const startServer = async () => {
   try {
-    console.log('初始化数据库V3...');
+    console.log('🔧 初始化数据库V3...');
     await migrateToV3();
-    console.log('数据库V3初始化完成！');
+    console.log('✅ 数据库V3初始化完成！');
 
-    app.listen(PORT, () => {
+    // 云端部署优化：监听所有网络接口
+    const host = NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
+    
+    const server = app.listen(PORT, host, () => {
       console.log('=================================');
-      console.log('🚀 生产项目管理系统服务器已启动 (V3)');
+      console.log('🚀 ProdSync 系统启动成功! (V3-Cloud)');
       console.log(`📍 端口: ${PORT}`);
-      console.log(`🌐 健康检查: http://localhost:${PORT}/health`);
-      console.log('新功能: 纯任务管理系统（无项目层级）');
+      console.log(`🌐 环境: ${NODE_ENV}`);
+      console.log(`🔗 健康检查: http://${host === '0.0.0.0' ? 'your-domain' : 'localhost'}:${PORT}/health`);
+      if (NODE_ENV === 'production') {
+        console.log('☁️  云端部署模式');
+      } else {
+        console.log('💻 本地开发模式');
+      }
       console.log('=================================');
     });
+
+    // 优雅关闭处理
+    const gracefulShutdown = (signal) => {
+      console.log(`\n收到 ${signal} 信号，正在优雅关闭服务器...`);
+      server.close((err) => {
+        if (err) {
+          console.error('关闭服务器时出错:', err);
+          process.exit(1);
+        }
+        console.log('✅ 服务器已安全关闭');
+        process.exit(0);
+      });
+      
+      // 强制关闭超时
+      setTimeout(() => {
+        console.error('❌ 强制关闭服务器 (超时)');
+        process.exit(1);
+      }, 10000);
+    };
+
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
   } catch (error) {
-    console.error('启动服务器失败:', error);
+    console.error('❌ 启动服务器失败:', error);
     process.exit(1);
   }
 };
 
-startServer(); 
+// 启动服务器
+startServer();
+
+// 导出app以供其他文件使用
+module.exports = app; 

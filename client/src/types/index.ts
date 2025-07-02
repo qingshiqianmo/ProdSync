@@ -57,8 +57,8 @@ export interface Milestone {
   name: string;
   description: string;
   planned_date: string;
-  actual_date?: string;
-  status: string;
+  actual_completion_date?: string; // Renamed from actual_date
+  status: MilestoneStatus; // Changed to use MilestoneStatus enum
   order_index: number;
   created_at?: string;
   updated_at?: string;
@@ -78,6 +78,7 @@ export interface Task {
   planned_end_date: string;
   actual_start_date?: string;
   actual_end_date?: string;
+  acknowledged_by_leader_at?: string; // New field
   created_at: string;
   updated_at: string;
   created_by_name?: string;
@@ -120,7 +121,7 @@ export interface CreateMilestoneRequest {
 
 export interface UpdateMilestoneRequest {
   status?: string;
-  actual_date?: string;
+  actual_completion_date?: string; // Renamed from actual_date
 }
 
 export interface ApiResponse<T = any> {

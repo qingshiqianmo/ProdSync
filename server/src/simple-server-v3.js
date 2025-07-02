@@ -350,27 +350,9 @@ app.put('/api/tasks/:id/status', authenticateToken, async (req, res) => {
     }
     const currentUser = await dbGet('SELECT identity FROM users_v3 WHERE id = ?', [userId]);
 
-    // New Permission Logic: Only executor or admin/scheduler can change status to IN_PROGRESS or COMPLETED
-    let canUpdateStatus = false;
+    // Permission Check:
     if (currentUser.identity === IDENTITIES.ADMIN || currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER) {
-      canUpdateStatus = true;
-    } else if (task.executor === userId && (status === TASK_STATUS.IN_PROGRESS || status === TASK_STATUS.COMPLETED)) {
-      canUpdateStatus = true;
-    } else if (task.executor === userId && (status === TASK_STATUS.PENDING || status === TASK_STATUS.CANCELLED)) {
-      // Allow executor to change to pending or cancelled as well, if needed by business logic.
-      // For now, primary focus is on IN_PROGRESS and COMPLETED.
-      // If other statuses are allowed for executor, this condition needs adjustment.
-      // Assuming for now only IN_PROGRESS and COMPLETED are primary actions by executor.
-      // To be more restrictive: only allow executor to move to IN_PROGRESS and COMPLETED.
-      // Let's stick to: executor can only move to IN_PROGRESS and COMPLETED.
-      // Admins/Schedulers can set any valid status.
-      canUpdateStatus = (status === TASK_STATUS.IN_PROGRESS || status === TASK_STATUS.COMPLETED);
-    }
-    // If status is PENDING or CANCELLED, and user is ADMIN or SCHEDULER, it's already true.
-    // If user is executor, they should only be able to move to IN_PROGRESS or COMPLETED.
-
-    if (currentUser.identity === IDENTITIES.ADMIN || currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER) {
-        // Admins and Schedulers can set any valid status
+        // Admins and Schedulers can set any valid status.
     } else if (task.executor === userId) {
         // Executors can only set status to IN_PROGRESS or COMPLETED
         if (status !== TASK_STATUS.IN_PROGRESS && status !== TASK_STATUS.COMPLETED) {

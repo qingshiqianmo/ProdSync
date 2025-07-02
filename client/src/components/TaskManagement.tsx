@@ -789,18 +789,22 @@ const TaskManagement: React.FC = () => {
                                   size="small"
                                   style={{ marginTop: 4, display: 'block', marginLeft: 'auto' }}
                                   onClick={async () => {
-                                    try {
-                                      await taskAPI.updateMilestoneStatus(milestone.id!, {
-                                        status: MilestoneStatus.COMPLETED, // Use MilestoneStatus enum
-                                        actual_completion_date: dayjs().format('YYYY-MM-DD'),
-                                      });
-                                      message.success('里程碑已标记为完成');
-                                      // Refresh task details
-                                      const updatedTaskDetail = await taskAPI.getTask(selectedTask.id);
-                                      setSelectedTask(updatedTaskDetail);
-                                      loadData(); // Also refresh the main task list
-                                    } catch (error) {
-                                      message.error('操作失败');
+                                    if (milestone.id) {
+                                      try {
+                                        await taskAPI.updateMilestoneStatus(milestone.id, {
+                                          status: MilestoneStatus.COMPLETED,
+                                          actual_completion_date: dayjs().format('YYYY-MM-DD'),
+                                        });
+                                        message.success('里程碑已标记为完成');
+                                        const updatedTaskDetail = await taskAPI.getTask(selectedTask.id);
+                                        setSelectedTask(updatedTaskDetail);
+                                        loadData();
+                                      } catch (error) {
+                                        message.error('完成里程碑操作失败');
+                                      }
+                                    } else {
+                                      message.error('无法更新里程碑：缺少里程碑ID');
+                                      console.error("Attempted to update milestone without an ID", milestone);
                                     }
                                   }}
                                 >
@@ -861,7 +865,11 @@ const TaskManagement: React.FC = () => {
                     开始任务
                   </Button>
                 )}
-                {selectedTask.status === TaskStatus.IN_PROGRESS && (
+                {/* Executor or Admin/Scheduler: Complete Task */}
+                {(user.identity === UserIdentity.ADMIN ||
+                  user.identity === UserIdentity.PRODUCTION_SCHEDULER ||
+                  user.id === selectedTask.executor) &&
+                  selectedTask.status === TaskStatus.IN_PROGRESS && (
                   <Button
                     type="primary"
                     onClick={async () => {

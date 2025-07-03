@@ -55,10 +55,11 @@ deploy/
 prodsync-deploy.zip
 temp-deploy/
 
-# Scripts
+# Scripts (exclude except docker-entrypoint.sh)
 scripts/
 *.bat
-*.sh
+**/*.sh
+!docker-entrypoint.sh
 
 # Database backups
 *.db.backup

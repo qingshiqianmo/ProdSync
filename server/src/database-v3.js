@@ -121,6 +121,7 @@ const insertInitialDataV3 = async () => {
     console.log(`📛 姓名: ${existingAdmin.name}`);
     console.log(`💡 提示: 管理员账户已存在，密码已保留您的修改`);
     console.log(`🔧 如需重置密码，请在用户管理中操作`);
+    console.log(`⚠️  注意: 密码已加密存储，无法直接显示明文`);
     console.log('==========================================');
   } else {
     // 创建新的管理员账户

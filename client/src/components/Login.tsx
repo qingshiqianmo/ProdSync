@@ -37,7 +37,7 @@ const Login: React.FC = () => {
       <Card style={{ width: 400, boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <Title level={2} style={{ color: '#1890ff' }}>
-            中铁二院电化院生产管理系统
+            电化院生产管理系统 ProdSync
           </Title>
           <p style={{ color: '#666' }}>请登录您的账户</p>
         </div>

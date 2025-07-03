@@ -374,7 +374,7 @@ const Dashboard: React.FC = () => {
       <Sider width={200} theme="light">
         <div style={{ padding: '16px', textAlign: 'center', borderBottom: '1px solid #f0f0f0' }}>
           <Title level={4} style={{ margin: 0, color: '#1890ff' }}>
-            中铁二院电化院生产管理系统
+            电化院生产管理系统 ProdSync
           </Title>
           <Text type="secondary" style={{ fontSize: '12px' }}>
             测试版

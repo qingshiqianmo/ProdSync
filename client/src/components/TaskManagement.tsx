@@ -58,9 +58,11 @@ const TaskManagement: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
+  const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [isDetailModalVisible, setIsDetailModalVisible] = useState(false);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [form] = Form.useForm();
+  const [editForm] = Form.useForm();
 
   useEffect(() => {
     loadData();
@@ -96,12 +98,14 @@ const TaskManagement: React.FC = () => {
     }
   };
 
-  const getTaskStatusColor = (status: TaskStatus) => {
+  const getTaskStatusColor = (status: TaskStatus, isOverdue: boolean = false) => {
+    if (isOverdue && status !== TaskStatus.COMPLETED) {
+      return 'error'; // 逾期显示红色
+    }
     switch (status) {
       case TaskStatus.PENDING: return 'default';
       case TaskStatus.IN_PROGRESS: return 'processing';
       case TaskStatus.COMPLETED: return 'success';
-      case TaskStatus.CANCELLED: return 'error';
       default: return 'default';
     }
   };
@@ -115,12 +119,14 @@ const TaskManagement: React.FC = () => {
     }
   };
 
-  const getTaskStatusText = (status: TaskStatus) => {
+  const getTaskStatusText = (status: TaskStatus, isOverdue: boolean = false) => {
+    if (isOverdue && status !== TaskStatus.COMPLETED) {
+      return '已逾期';
+    }
     switch (status) {
       case TaskStatus.PENDING: return '待处理';
       case TaskStatus.IN_PROGRESS: return '进行中';
       case TaskStatus.COMPLETED: return '已完成';
-      case TaskStatus.CANCELLED: return '已取消';
       default: return '未知';
     }
   };
@@ -134,7 +140,17 @@ const TaskManagement: React.FC = () => {
     }
   };
 
-  const getMilestoneStatusColor = (status: MilestoneStatus) => {
+  // 检查里程碑是否逾期
+  const isMilestoneOverdue = (milestone: Milestone) => {
+    if (milestone.status === MilestoneStatus.COMPLETED) return false;
+    const today = dayjs().format('YYYY-MM-DD');
+    return dayjs(today).isAfter(dayjs(milestone.planned_date));
+  };
+
+  const getMilestoneStatusColor = (status: MilestoneStatus, isOverdue: boolean = false) => {
+    if (isOverdue && status !== MilestoneStatus.COMPLETED) {
+      return 'error'; // 逾期显示红色
+    }
     switch (status) {
       case MilestoneStatus.PENDING: return 'default';
       case MilestoneStatus.IN_PROGRESS: return 'processing';
@@ -144,7 +160,10 @@ const TaskManagement: React.FC = () => {
     }
   };
 
-  const getMilestoneStatusText = (status: MilestoneStatus) => {
+  const getMilestoneStatusText = (status: MilestoneStatus, isOverdue: boolean = false) => {
+    if (isOverdue && status !== MilestoneStatus.COMPLETED) {
+      return '已逾期';
+    }
     switch (status) {
       case MilestoneStatus.PENDING: return '待开始';
       case MilestoneStatus.IN_PROGRESS: return '进行中';
@@ -225,6 +244,50 @@ const TaskManagement: React.FC = () => {
     if (user?.identity === UserIdentity.ADMIN) return true;
     if (user?.identity === UserIdentity.PRODUCTION_SCHEDULER) return true;
     return false;
+  };
+
+  const canEditTask = (task: Task) => {
+    if (user?.identity === UserIdentity.ADMIN) return true;
+    if (user?.identity === UserIdentity.PRODUCTION_SCHEDULER) return true;
+    return false;
+  };
+
+  const openEditModal = (task: Task) => {
+    setSelectedTask(task);
+    editForm.setFieldsValue({
+      name: task.name,
+      description: task.description,
+      type: task.type,
+      production_leader: task.production_leader,
+      executor: task.executor,
+      dateRange: [dayjs(task.planned_start_date), dayjs(task.planned_end_date)]
+    });
+    setIsEditModalVisible(true);
+  };
+
+  const handleUpdateTask = async (values: any) => {
+    if (!selectedTask) return;
+    
+    try {
+      const updateData = {
+        name: values.name,
+        description: values.description || '',
+        type: values.type,
+        production_leader: values.production_leader,
+        executor: values.executor,
+        planned_start_date: values.dateRange[0].format('YYYY-MM-DD'),
+        planned_end_date: values.dateRange[1].format('YYYY-MM-DD')
+      };
+      
+      await taskAPI.updateTask(selectedTask.id, updateData);
+      message.success('任务更新成功');
+      setIsEditModalVisible(false);
+      editForm.resetFields();
+      setSelectedTask(null);
+      loadData();
+    } catch (error) {
+      message.error('任务更新失败');
+    }
   };
 
   const columns: ColumnsType<Task> = [
@@ -336,8 +399,20 @@ const TaskManagement: React.FC = () => {
               查看
             </Button>
 
+            {/* Admin or Scheduler: Edit Task */}
+            {canEditTask(record) && (
+              <Button
+                type="link"
+                icon={<EditOutlined />}
+                onClick={() => openEditModal(record)}
+                size="small"
+              >
+                编辑
+              </Button>
+            )}
+
             {/* Production Leader: Acknowledge Task */}
-            {isProductionLeader && !record.acknowledged_by_leader_at && record.status !== TaskStatus.CANCELLED && (
+            {isProductionLeader && !record.acknowledged_by_leader_at && (
               <Button
                 type="link"
                 size="small"
@@ -358,10 +433,9 @@ const TaskManagement: React.FC = () => {
 
             {/* Executor or Admin/Scheduler: Start Task */}
             {canStartOrCompleteTask && record.status === TaskStatus.PENDING && (
-              <Button
-                type="link"
-                size="small"
-                onClick={async () => {
+              <Popconfirm
+                title="确定要开始这个任务吗？"
+                onConfirm={async () => {
                   try {
                     await taskAPI.updateTaskStatus(record.id, TaskStatus.IN_PROGRESS);
                     message.success('任务已标记为进行中');
@@ -370,17 +444,23 @@ const TaskManagement: React.FC = () => {
                     message.error('操作失败');
                   }
                 }}
+                okText="确定"
+                cancelText="取消"
               >
-                开始任务
-              </Button>
+                <Button
+                  type="link"
+                  size="small"
+                >
+                  开始任务
+                </Button>
+              </Popconfirm>
             )}
 
             {/* Executor or Admin/Scheduler: Complete Task */}
             {canStartOrCompleteTask && record.status === TaskStatus.IN_PROGRESS && (
-              <Button
-                type="link"
-                size="small"
-                onClick={async () => {
+              <Popconfirm
+                title="确定要完成这个任务吗？"
+                onConfirm={async () => {
                   try {
                     await taskAPI.updateTaskStatus(record.id, TaskStatus.COMPLETED);
                     message.success('任务已标记为完成');
@@ -389,9 +469,16 @@ const TaskManagement: React.FC = () => {
                     message.error('操作失败');
                   }
                 }}
+                okText="确定"
+                cancelText="取消"
               >
-                完成任务
-              </Button>
+                <Button
+                  type="link"
+                  size="small"
+                >
+                  完成任务
+                </Button>
+              </Popconfirm>
             )}
 
             {/* Admin or Scheduler: Delete Task (using existing canDeleteTask) */}
@@ -419,8 +506,19 @@ const TaskManagement: React.FC = () => {
   ];
 
   const filterTasks = (status?: TaskStatus) => {
-    if (!status) return tasks;
     return tasks.filter(task => task.status === status);
+  };
+
+  // 检查任务是否逾期
+  const isTaskOverdue = (task: Task) => {
+    if (task.status === TaskStatus.COMPLETED) return false;
+    const today = dayjs().format('YYYY-MM-DD');
+    return dayjs(today).isAfter(dayjs(task.planned_end_date));
+  };
+
+  // 过滤逾期任务
+  const filterOverdueTasks = () => {
+    return tasks.filter(task => isTaskOverdue(task));
   };
 
   const renderTaskTable = (filteredTasks: Task[]) => (
@@ -468,7 +566,7 @@ const TaskManagement: React.FC = () => {
             📋 当前视图：{getTaskScopeDescription()}
           </Text>
         </div>
-        <Tabs defaultActiveKey="all">
+        <Tabs defaultActiveKey="all" size="large">
           <TabPane tab="全部任务" key="all">
             {renderTaskTable(tasks)}
           </TabPane>
@@ -481,8 +579,8 @@ const TaskManagement: React.FC = () => {
           <TabPane tab="已完成" key="completed">
             {renderTaskTable(filterTasks(TaskStatus.COMPLETED))}
           </TabPane>
-          <TabPane tab="已取消" key="cancelled">
-            {renderTaskTable(filterTasks(TaskStatus.CANCELLED))}
+          <TabPane tab="已逾期" key="overdue">
+            {renderTaskTable(filterOverdueTasks())}
           </TabPane>
         </Tabs>
       </Card>
@@ -650,6 +748,106 @@ const TaskManagement: React.FC = () => {
         </Form>
       </Modal>
 
+      {/* 编辑任务Modal */}
+      <Modal
+        title="编辑任务"
+        open={isEditModalVisible}
+        onCancel={() => {
+          setIsEditModalVisible(false);
+          editForm.resetFields();
+          setSelectedTask(null);
+        }}
+        footer={null}
+        width={800}
+      >
+        <Form
+          form={editForm}
+          layout="vertical"
+          onFinish={handleUpdateTask}
+        >
+          <Form.Item
+            name="name"
+            label="任务名称"
+            rules={[{ required: true, message: '请输入任务名称' }]}
+          >
+            <Input placeholder="请输入任务名称" />
+          </Form.Item>
+          
+          <Form.Item
+            name="type"
+            label="任务类型"
+            rules={[{ required: true, message: '请选择任务类型' }]}
+          >
+            <Select placeholder="请选择任务类型">
+              <Option value={TaskType.MEETING}>会议</Option>
+              <Option value={TaskType.PROJECT}>项目</Option>
+              <Option value={TaskType.MISCELLANEOUS}>零星任务</Option>
+            </Select>
+          </Form.Item>
+          
+          <Form.Item
+            name="production_leader"
+            label="生产所负责人"
+            extra="可选，指定生产所层面的负责人"
+          >
+            <Select placeholder="请选择生产所负责人（可选）" allowClear>
+              {assignableUsers
+                .filter(u => u.identity === UserIdentity.PRODUCTION_LEADER)
+                .map(user => (
+                  <Option key={user.id} value={user.id}>
+                    {user.name} ({getIdentityText(user.identity)})
+                  </Option>
+                ))}
+            </Select>
+          </Form.Item>
+          
+          <Form.Item
+            name="executor"
+            label="执行人"
+            rules={[{ required: true, message: '请选择执行人' }]}
+            extra="必选，实际执行任务的人员"
+          >
+            <Select placeholder="请选择执行人">
+              {assignableUsers.map(user => (
+                <Option key={user.id} value={user.id}>
+                  {user.name} ({getIdentityText(user.identity)})
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+          
+          <Form.Item
+            name="dateRange"
+            label="计划时间"
+            rules={[{ required: true, message: '请选择计划时间' }]}
+          >
+            <RangePicker style={{ width: '100%' }} />
+          </Form.Item>
+          
+          <Form.Item
+            name="description"
+            label="任务描述"
+          >
+            <TextArea rows={3} placeholder="请输入任务描述" />
+          </Form.Item>
+          
+          <Form.Item style={{ textAlign: 'right', marginBottom: 0, marginTop: 24 }}>
+            <Space>
+              <Button onClick={() => {
+                setIsEditModalVisible(false);
+                editForm.resetFields();
+                setSelectedTask(null);
+              }}>
+                取消
+              </Button>
+              <Button type="primary" htmlType="submit">
+                保存
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
       {/* 任务详情Modal */}
       <Modal
         title="任务详情"
@@ -780,15 +978,13 @@ const TaskManagement: React.FC = () => {
                               </div>
                             </Col>
                             <Col flex="120px" style={{ textAlign: 'right' }}>
-                              <Tag color={getMilestoneStatusColor(milestone.status)}>
-                                {getMilestoneStatusText(milestone.status)}
+                              <Tag color={getMilestoneStatusColor(milestone.status, isMilestoneOverdue(milestone))}>
+                                {getMilestoneStatusText(milestone.status, isMilestoneOverdue(milestone))}
                               </Tag>
                               {canCompleteMilestone && milestone.status !== MilestoneStatus.COMPLETED && milestone.id && (
-                                <Button
-                                  type="link"
-                                  size="small"
-                                  style={{ marginTop: 4, display: 'block', marginLeft: 'auto' }}
-                                  onClick={async () => {
+                                <Popconfirm
+                                  title="确定要完成这个里程碑节点吗？"
+                                  onConfirm={async () => {
                                     if (milestone.id) {
                                       try {
                                         await taskAPI.updateMilestoneStatus(milestone.id, {
@@ -807,9 +1003,17 @@ const TaskManagement: React.FC = () => {
                                       console.error("Attempted to update milestone without an ID", milestone);
                                     }
                                   }}
+                                  okText="确定"
+                                  cancelText="取消"
                                 >
-                                  完成节点
-                                </Button>
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    style={{ marginTop: 4, display: 'block', marginLeft: 'auto' }}
+                                  >
+                                    完成节点
+                                  </Button>
+                                </Popconfirm>
                               )}
                             </Col>
                           </Row>
@@ -828,8 +1032,7 @@ const TaskManagement: React.FC = () => {
                 {/* Production Leader: Acknowledge Task */}
                 {user.identity === UserIdentity.PRODUCTION_LEADER &&
                   user.id === selectedTask.production_leader &&
-                  !selectedTask.acknowledged_by_leader_at &&
-                  selectedTask.status !== TaskStatus.CANCELLED && (
+                  !selectedTask.acknowledged_by_leader_at && (
                   <Button
                     style={{ borderColor: 'green', color: 'green' }}
                     onClick={async () => {
@@ -852,8 +1055,9 @@ const TaskManagement: React.FC = () => {
                   user.identity === UserIdentity.PRODUCTION_SCHEDULER ||
                   user.id === selectedTask.executor) &&
                   selectedTask.status === TaskStatus.PENDING && (
-                  <Button
-                    onClick={async () => {
+                  <Popconfirm
+                    title="确定要开始这个任务吗？"
+                    onConfirm={async () => {
                       try {
                         const updated = await taskAPI.updateTaskStatus(selectedTask.id, TaskStatus.IN_PROGRESS);
                         setSelectedTask(updated.task);
@@ -861,18 +1065,22 @@ const TaskManagement: React.FC = () => {
                         loadData();
                       } catch (error) { message.error('操作失败'); }
                     }}
+                    okText="确定"
+                    cancelText="取消"
                   >
-                    开始任务
-                  </Button>
+                    <Button>
+                      开始任务
+                    </Button>
+                  </Popconfirm>
                 )}
                 {/* Executor or Admin/Scheduler: Complete Task */}
                 {(user.identity === UserIdentity.ADMIN ||
                   user.identity === UserIdentity.PRODUCTION_SCHEDULER ||
                   user.id === selectedTask.executor) &&
                   selectedTask.status === TaskStatus.IN_PROGRESS && (
-                  <Button
-                    type="primary"
-                    onClick={async () => {
+                  <Popconfirm
+                    title="确定要完成这个任务吗？"
+                    onConfirm={async () => {
                       try {
                         const updated = await taskAPI.updateTaskStatus(selectedTask.id, TaskStatus.COMPLETED);
                         setSelectedTask(updated.task);
@@ -880,9 +1088,13 @@ const TaskManagement: React.FC = () => {
                         loadData();
                       } catch (error) { message.error('操作失败'); }
                     }}
+                    okText="确定"
+                    cancelText="取消"
                   >
-                    完成任务
-                  </Button>
+                    <Button type="primary">
+                      完成任务
+                    </Button>
+                  </Popconfirm>
                 )}
               </Space>
             )}

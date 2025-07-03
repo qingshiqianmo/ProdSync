@@ -2,12 +2,12 @@
   "name": "prod-sync-server",
   "version": "1.0.0",
   "description": "生产项目管理系统后端",
-  "main": "dist/index.js",
+  "main": "src/simple-server-v3.js",
   "scripts": {
-    "dev": "nodemon src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "demo": "ts-node src/scripts/demo-data.ts"
+    "dev": "nodemon src/simple-server-v3.js",
+    "start": "node src/simple-server-v3.js",
+    "build": "echo 'No build step needed for JavaScript files'",
+    "demo": "node create-default-users.js"
   },
   "dependencies": {
     "axios": "^1.10.0",

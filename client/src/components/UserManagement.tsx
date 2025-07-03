@@ -21,8 +21,7 @@ import {
   EditOutlined,
   DeleteOutlined,
   EyeOutlined,
-  UserOutlined,
-  UserAddOutlined
+  UserOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useAuth } from '../contexts/AuthContext';
@@ -81,16 +80,15 @@ const UserManagement: React.FC = () => {
 
   const handleCreateUser = async (values: any) => {
     try {
-      await authAPI.createUser({
+      const response = await authAPI.createUser({
         username: values.username,
-        password: values.password,
         email: values.email,
         name: values.name,
         identity: values.identity,
         department: values.department
       });
       
-      message.success('用户创建成功');
+      message.success('用户创建成功，默认密码为：test123');
       setIsCreateModalVisible(false);
       form.resetFields();
       loadUsers();
@@ -248,37 +246,20 @@ const UserManagement: React.FC = () => {
     },
   ];
 
-  const handleCreateTestAccounts = async () => {
-    try {
-      const response = await authAPI.createTestAccounts();
-      message.success(response.message);
-      loadUsers();
-    } catch (error: any) {
-      message.error(error.response?.data?.message || '创建测试账号失败');
-    }
-  };
+
 
   return (
     <div>
       <Card
         title="用户管理"
         extra={
-          <Space>
-            <Button
-              type="default"
-              icon={<UserAddOutlined />}
-              onClick={handleCreateTestAccounts}
-            >
-              快速创建测试账号
-            </Button>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => setIsCreateModalVisible(true)}
-            >
-              新建用户
-            </Button>
-          </Space>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setIsCreateModalVisible(true)}
+          >
+            新建用户
+          </Button>
         }
       >
         <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#f6f8fa', borderRadius: 6 }}>
@@ -304,7 +285,7 @@ const UserManagement: React.FC = () => {
 
       {/* 新建用户Modal */}
       <Modal
-        title="新建用户"
+        title="创建用户"
         open={isCreateModalVisible}
         onCancel={() => {
           setIsCreateModalVisible(false);
@@ -313,6 +294,12 @@ const UserManagement: React.FC = () => {
         footer={null}
         width={600}
       >
+        <div style={{ marginBottom: 16, padding: 12, backgroundColor: '#f6f8fa', borderRadius: 6, border: '1px solid #d9d9d9' }}>
+          <Text type="secondary">
+            💡 新用户将使用默认密码：<strong>test123</strong>，用户可以登录后自行修改密码
+          </Text>
+        </div>
+        
         <Form
           form={form}
           layout="vertical"
@@ -330,18 +317,6 @@ const UserManagement: React.FC = () => {
             </Col>
             <Col span={12}>
               <Form.Item
-                name="password"
-                label="密码"
-                rules={[{ required: true, message: '请输入密码' }]}
-              >
-                <Input.Password placeholder="请输入密码" />
-              </Form.Item>
-            </Col>
-          </Row>
-          
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
                 name="name"
                 label="姓名"
                 rules={[{ required: true, message: '请输入姓名' }]}
@@ -349,6 +324,9 @@ const UserManagement: React.FC = () => {
                 <Input placeholder="请输入姓名" />
               </Form.Item>
             </Col>
+          </Row>
+          
+          <Row gutter={16}>
             <Col span={12}>
               <Form.Item
                 name="identity"
@@ -363,9 +341,6 @@ const UserManagement: React.FC = () => {
                 </Select>
               </Form.Item>
             </Col>
-          </Row>
-          
-          <Row gutter={16}>
             <Col span={12}>
               <Form.Item
                 name="department"
@@ -374,6 +349,9 @@ const UserManagement: React.FC = () => {
                 <Input placeholder="请输入部门" />
               </Form.Item>
             </Col>
+          </Row>
+          
+          <Row gutter={16}>
             <Col span={12}>
               <Form.Item
                 name="email"

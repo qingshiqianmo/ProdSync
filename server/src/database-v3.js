@@ -26,8 +26,7 @@ const TASK_TYPES = {
 const TASK_STATUS = {
   PENDING: 'pending',
   IN_PROGRESS: 'in_progress',
-  COMPLETED: 'completed',
-  CANCELLED: 'cancelled'
+  COMPLETED: 'completed'
   // DELAYED can be a computed status rather than a stored one
 };
 
@@ -66,7 +65,7 @@ const initDatabaseV3 = () => {
       name TEXT NOT NULL,
       description TEXT,
       type TEXT NOT NULL CHECK (type IN ('meeting', 'project', 'miscellaneous')),
-      status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'cancelled')),
+      status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed')),
       created_by INTEGER NOT NULL,
       production_leader INTEGER,
       executor INTEGER NOT NULL,
@@ -114,10 +113,10 @@ const insertInitialDataV3 = async () => {
   
   // 插入管理员账号
   try {
-    db.prepare(`
-      INSERT OR REPLACE INTO users_v3 (id, username, password, name, identity, department, email)
-      VALUES (1, 'admin', ?, '系统管理员', 'admin', '管理部', 'admin@company.com')
-    `).run(hashedPassword);
+      db.prepare(`
+    INSERT OR IGNORE INTO users_v3 (id, username, password, name, identity, department, email)
+    VALUES (1, 'admin', ?, '系统管理员', 'admin', '管理部', 'admin@company.com')
+  `).run(hashedPassword);
     
     console.log('管理员账号创建成功');
   } catch (error) {

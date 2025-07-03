@@ -14,7 +14,11 @@ import {
   message,
   Modal,
   Descriptions,
-  MenuProps
+  MenuProps,
+  Form,
+  Input,
+  Divider,
+  List
 } from 'antd';
 import {
   DashboardOutlined,
@@ -26,7 +30,7 @@ import {
 } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
 import { taskAPI, authAPI } from '../services/api';
-import { Task, User, UserIdentity, TaskType, TaskStatus } from '../types';
+import { Task, User, UserIdentity, TaskType, TaskStatus, Milestone, MilestoneStatus } from '../types';
 import dayjs from 'dayjs';
 import TaskManagement from './TaskManagement';
 import UserManagement from './UserManagement';
@@ -42,6 +46,10 @@ const Dashboard: React.FC = () => {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [currentView, setCurrentView] = useState<string>('dashboard');
   const [isDetailModalVisible, setIsDetailModalVisible] = useState(false);
+  const [isProfileModalVisible, setIsProfileModalVisible] = useState(false);
+  const [isPasswordModalVisible, setIsPasswordModalVisible] = useState(false);
+  const [profileForm] = Form.useForm();
+  const [passwordForm] = Form.useForm();
 
   useEffect(() => {
     loadData();
@@ -78,11 +86,13 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const getTaskStatusColor = (status: TaskStatus) => {
+  const getTaskStatusColor = (status: TaskStatus, isOverdue: boolean = false) => {
+    if (isOverdue && status !== TaskStatus.COMPLETED) {
+      return 'error'; // 逾期显示红色
+    }
     switch (status) {
       case TaskStatus.COMPLETED: return 'success';
       case TaskStatus.IN_PROGRESS: return 'processing';
-      case TaskStatus.CANCELLED: return 'error';
       case TaskStatus.PENDING: return 'default';
       default: return 'default';
     }
@@ -97,19 +107,129 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const getTaskStatusText = (status: TaskStatus) => {
+  const getTaskStatusText = (status: TaskStatus, isOverdue: boolean = false) => {
+    if (isOverdue && status !== TaskStatus.COMPLETED) {
+      return '已逾期';
+    }
     switch (status) {
       case TaskStatus.COMPLETED: return '已完成';
       case TaskStatus.IN_PROGRESS: return '进行中';
-      case TaskStatus.CANCELLED: return '已取消';
       case TaskStatus.PENDING: return '待处理';
       default: return status;
     }
   };
 
-  const openTaskDetail = (task: Task) => {
-    setSelectedTask(task);
-    setIsDetailModalVisible(true);
+  // 检查任务是否逾期
+  const isTaskOverdue = (task: Task) => {
+    if (task.status === TaskStatus.COMPLETED) return false;
+    const today = dayjs().format('YYYY-MM-DD');
+    return dayjs(today).isAfter(dayjs(task.planned_end_date));
+  };
+
+  // 检查里程碑是否逾期
+  const isMilestoneOverdue = (milestone: Milestone) => {
+    if (milestone.status === MilestoneStatus.COMPLETED) return false;
+    const today = dayjs().format('YYYY-MM-DD');
+    return dayjs(today).isAfter(dayjs(milestone.planned_date));
+  };
+
+  const getMilestoneStatusColor = (status: MilestoneStatus, isOverdue: boolean = false) => {
+    if (isOverdue && status !== MilestoneStatus.COMPLETED) {
+      return 'error'; // 逾期显示红色
+    }
+    switch (status) {
+      case MilestoneStatus.PENDING: return 'default';
+      case MilestoneStatus.IN_PROGRESS: return 'processing';
+      case MilestoneStatus.COMPLETED: return 'success';
+      case MilestoneStatus.DELAYED: return 'error';
+      default: return 'default';
+    }
+  };
+
+  const getMilestoneStatusText = (status: MilestoneStatus, isOverdue: boolean = false) => {
+    if (isOverdue && status !== MilestoneStatus.COMPLETED) {
+      return '已逾期';
+    }
+    switch (status) {
+      case MilestoneStatus.PENDING: return '待开始';
+      case MilestoneStatus.IN_PROGRESS: return '进行中';
+      case MilestoneStatus.COMPLETED: return '已完成';
+      case MilestoneStatus.DELAYED: return '延期';
+      default: return status;
+    }
+  };
+
+  const openTaskDetail = async (task: Task) => {
+    try {
+      const taskDetail = await taskAPI.getTask(task.id);
+      setSelectedTask(taskDetail);
+      setIsDetailModalVisible(true);
+    } catch (error) {
+      message.error('获取任务详情失败');
+    }
+  };
+
+  // 打开个人信息编辑
+  const openProfileModal = () => {
+    profileForm.setFieldsValue({
+      name: user?.name,
+      department: user?.department || '',
+      email: user?.email || ''
+    });
+    setIsProfileModalVisible(true);
+  };
+
+  // 更新个人信息
+  const handleUpdateProfile = async (values: any) => {
+    try {
+      const response = await fetch('/api/user/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify(values)
+      });
+
+      if (response.ok) {
+        message.success('个人信息更新成功');
+        setIsProfileModalVisible(false);
+        profileForm.resetFields();
+        // 重新获取用户信息
+        const updatedUser = await authAPI.getCurrentUser();
+        // 这里需要更新上下文中的用户信息，但由于useAuth的限制，我们暂时只显示成功消息
+      } else {
+        const error = await response.json();
+        message.error(error.message || '更新失败');
+      }
+    } catch (error) {
+      message.error('更新个人信息失败');
+    }
+  };
+
+  // 修改密码
+  const handleChangePassword = async (values: any) => {
+    try {
+      const response = await fetch('/api/user/password', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify(values)
+      });
+
+      if (response.ok) {
+        message.success('密码修改成功');
+        setIsPasswordModalVisible(false);
+        passwordForm.resetFields();
+      } else {
+        const error = await response.json();
+        message.error(error.message || '修改失败');
+      }
+    } catch (error) {
+      message.error('修改密码失败');
+    }
   };
 
   const getDataScopeDescription = () => {
@@ -178,12 +298,32 @@ const Dashboard: React.FC = () => {
     },
   ];
 
+  // 计算里程碑统计
+  const getAllMilestones = () => {
+    const allMilestones: Milestone[] = [];
+    tasks.forEach(task => {
+      if (task.milestones && task.milestones.length > 0) {
+        allMilestones.push(...task.milestones);
+      }
+    });
+    return allMilestones;
+  };
+
+  const allMilestones = getAllMilestones();
+
   const statistics = {
     total: tasks.length,
     completed: tasks.filter(t => t.status === TaskStatus.COMPLETED).length,
     inProgress: tasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length,
     pending: tasks.filter(t => t.status === TaskStatus.PENDING).length,
-    cancelled: tasks.filter(t => t.status === TaskStatus.CANCELLED).length,
+    overdue: tasks.filter(t => isTaskOverdue(t)).length,
+    
+    // 里程碑统计
+    milestones: {
+      total: allMilestones.length,
+      completed: allMilestones.filter(m => m.status === MilestoneStatus.COMPLETED).length,
+      overdue: allMilestones.filter(m => isMilestoneOverdue(m)).length,
+    }
   };
 
   const userMenuItems: MenuProps['items'] = [
@@ -191,7 +331,7 @@ const Dashboard: React.FC = () => {
       key: 'profile',
       icon: <UserOutlined />,
       label: '个人信息',
-      onClick: () => message.info('个人信息功能开发中')
+      onClick: openProfileModal
     },
     {
       key: 'logout',
@@ -234,10 +374,10 @@ const Dashboard: React.FC = () => {
       <Sider width={200} theme="light">
         <div style={{ padding: '16px', textAlign: 'center', borderBottom: '1px solid #f0f0f0' }}>
           <Title level={4} style={{ margin: 0, color: '#1890ff' }}>
-            生产管理系统
+            中铁二院电化院生产管理系统
           </Title>
           <Text type="secondary" style={{ fontSize: '12px' }}>
-            V3.0 纯任务管理
+            测试版
           </Text>
         </div>
         <Menu
@@ -280,8 +420,8 @@ const Dashboard: React.FC = () => {
                 </Text>
               </div>
               
-              {/* 统计卡片 */}
-              <Row gutter={16} style={{ marginBottom: 24 }}>
+              {/* 任务统计卡片 */}
+              <Row gutter={16} style={{ marginBottom: 16 }}>
                 <Col span={6}>
                   <Card>
                     <Statistic
@@ -312,13 +452,56 @@ const Dashboard: React.FC = () => {
                 <Col span={6}>
                   <Card>
                     <Statistic
-                      title="待处理"
-                      value={statistics.pending}
-                      valueStyle={{ color: '#faad14' }}
+                      title="任务逾期"
+                      value={statistics.overdue}
+                      valueStyle={{ color: '#ff4d4f' }}
                     />
                   </Card>
                 </Col>
               </Row>
+
+              {/* 里程碑统计卡片 */}
+              {statistics.milestones.total > 0 && (
+                <Row gutter={16} style={{ marginBottom: 24 }}>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic
+                        title="里程碑总数"
+                        value={statistics.milestones.total}
+                        prefix="🎯"
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic
+                        title="已完成里程碑"
+                        value={statistics.milestones.completed}
+                        valueStyle={{ color: '#3f8600' }}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic
+                        title="里程碑逾期"
+                        value={statistics.milestones.overdue}
+                        valueStyle={{ color: '#ff4d4f' }}
+                      />
+                    </Card>
+                  </Col>
+                  <Col span={6}>
+                    <Card>
+                      <Statistic
+                        title="完成率"
+                        value={statistics.milestones.total > 0 ? Math.round((statistics.milestones.completed / statistics.milestones.total) * 100) : 0}
+                        suffix="%"
+                        valueStyle={{ color: statistics.milestones.total > 0 && (statistics.milestones.completed / statistics.milestones.total) >= 0.8 ? '#3f8600' : '#666' }}
+                      />
+                    </Card>
+                  </Col>
+                </Row>
+              )}
 
               <Row gutter={16}>
                 <Col span={24}>
@@ -346,8 +529,8 @@ const Dashboard: React.FC = () => {
                             </div>
                           </div>
                           <div style={{ textAlign: 'right' }}>
-                            <Tag color={getTaskStatusColor(task.status)}>
-                              {getTaskStatusText(task.status)}
+                            <Tag color={getTaskStatusColor(task.status, isTaskOverdue(task))}>
+                              {getTaskStatusText(task.status, isTaskOverdue(task))}
                             </Tag>
                             <div style={{ fontSize: '12px', color: '#666', marginTop: 4 }}>
                               {dayjs(task.planned_end_date).format('MM-DD')}
@@ -396,58 +579,246 @@ const Dashboard: React.FC = () => {
         width={700}
       >
         {selectedTask && (
-          <Descriptions bordered column={2}>
-            <Descriptions.Item label="任务名称" span={2}>
-              {selectedTask.name}
-            </Descriptions.Item>
-            <Descriptions.Item label="任务类型">
-              <Tag color={getTaskTypeColor(selectedTask.type)}>
-                {getTaskTypeText(selectedTask.type)}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="任务状态">
-              <Tag color={getTaskStatusColor(selectedTask.status)}>
-                {getTaskStatusText(selectedTask.status)}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="创建者">
-              {selectedTask.created_by_name}
-            </Descriptions.Item>
-            <Descriptions.Item label="生产所负责人">
-              {selectedTask.production_leader_name || '未指定'}
-            </Descriptions.Item>
-            <Descriptions.Item label="执行人">
-              {selectedTask.executor_name}
-            </Descriptions.Item>
-            <Descriptions.Item label="计划开始">
-              {dayjs(selectedTask.planned_start_date).format('YYYY-MM-DD')}
-            </Descriptions.Item>
-            <Descriptions.Item label="计划结束">
-              {dayjs(selectedTask.planned_end_date).format('YYYY-MM-DD')}
-            </Descriptions.Item>
-            {selectedTask.actual_start_date && (
-              <Descriptions.Item label="实际开始">
-                {dayjs(selectedTask.actual_start_date).format('YYYY-MM-DD')}
+          <div>
+            <Descriptions bordered column={2}>
+              <Descriptions.Item label="任务名称" span={2}>
+                {selectedTask.name}
               </Descriptions.Item>
-            )}
-            {selectedTask.actual_end_date && (
-              <Descriptions.Item label="实际结束">
-                {dayjs(selectedTask.actual_end_date).format('YYYY-MM-DD')}
+              <Descriptions.Item label="任务类型">
+                <Tag color={getTaskTypeColor(selectedTask.type)}>
+                  {getTaskTypeText(selectedTask.type)}
+                </Tag>
               </Descriptions.Item>
-            )}
-            <Descriptions.Item label="创建时间">
-              {dayjs(selectedTask.created_at).format('YYYY-MM-DD HH:mm')}
-            </Descriptions.Item>
-            <Descriptions.Item label="更新时间">
-              {dayjs(selectedTask.updated_at).format('YYYY-MM-DD HH:mm')}
-            </Descriptions.Item>
-            {selectedTask.description && (
-              <Descriptions.Item label="任务描述" span={2}>
-                {selectedTask.description}
+              <Descriptions.Item label="任务状态">
+                <Tag color={getTaskStatusColor(selectedTask.status, isTaskOverdue(selectedTask))}>
+                  {getTaskStatusText(selectedTask.status, isTaskOverdue(selectedTask))}
+                </Tag>
               </Descriptions.Item>
+              <Descriptions.Item label="创建者">
+                {selectedTask.created_by_name}
+              </Descriptions.Item>
+              <Descriptions.Item label="生产所负责人">
+                {selectedTask.production_leader_name || '未指定'}
+              </Descriptions.Item>
+              <Descriptions.Item label="执行人">
+                {selectedTask.executor_name}
+              </Descriptions.Item>
+              <Descriptions.Item label="计划开始">
+                {dayjs(selectedTask.planned_start_date).format('YYYY-MM-DD')}
+              </Descriptions.Item>
+              <Descriptions.Item label="计划结束">
+                {dayjs(selectedTask.planned_end_date).format('YYYY-MM-DD')}
+              </Descriptions.Item>
+              {selectedTask.actual_start_date && (
+                <Descriptions.Item label="实际开始">
+                  {dayjs(selectedTask.actual_start_date).format('YYYY-MM-DD')}
+                </Descriptions.Item>
+              )}
+              {selectedTask.actual_end_date && (
+                <Descriptions.Item label="实际结束">
+                  {dayjs(selectedTask.actual_end_date).format('YYYY-MM-DD')}
+                </Descriptions.Item>
+              )}
+              <Descriptions.Item label="创建时间">
+                {dayjs(selectedTask.created_at).format('YYYY-MM-DD HH:mm')}
+              </Descriptions.Item>
+              <Descriptions.Item label="更新时间">
+                {dayjs(selectedTask.updated_at).format('YYYY-MM-DD HH:mm')}
+              </Descriptions.Item>
+              {selectedTask.description && (
+                <Descriptions.Item label="任务描述" span={2}>
+                  {selectedTask.description}
+                </Descriptions.Item>
+              )}
+            </Descriptions>
+            
+            {/* 里程碑列表 */}
+            {selectedTask.milestones && selectedTask.milestones.length > 0 && (
+              <div style={{ marginTop: 24 }}>
+                <Divider orientation="left">里程碑节点</Divider>
+                <List
+                  dataSource={selectedTask.milestones}
+                  renderItem={(milestone: Milestone) => (
+                    <List.Item
+                      style={{
+                        padding: '12px 0',
+                        borderBottom: '1px solid #f0f0f0'
+                      }}
+                    >
+                      <List.Item.Meta
+                        title={
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span>{milestone.name}</span>
+                            <Tag color={getMilestoneStatusColor(milestone.status, isMilestoneOverdue(milestone))}>
+                              {getMilestoneStatusText(milestone.status, isMilestoneOverdue(milestone))}
+                            </Tag>
+                          </div>
+                        }
+                        description={
+                          <div>
+                            <div style={{ marginBottom: 4 }}>
+                              <Text type="secondary">
+                                计划完成：{dayjs(milestone.planned_date).format('YYYY-MM-DD')}
+                              </Text>
+                            </div>
+                            {milestone.actual_completion_date && (
+                              <div style={{ marginBottom: 4 }}>
+                                <Text type="secondary">
+                                  实际完成：{dayjs(milestone.actual_completion_date).format('YYYY-MM-DD')}
+                                </Text>
+                              </div>
+                            )}
+                            {milestone.description && (
+                              <div>
+                                <Text type="secondary">{milestone.description}</Text>
+                              </div>
+                            )}
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              </div>
             )}
-          </Descriptions>
+          </div>
         )}
+      </Modal>
+
+      {/* 个人信息Modal */}
+      <Modal
+        title="个人信息"
+        open={isProfileModalVisible}
+        onCancel={() => {
+          setIsProfileModalVisible(false);
+          profileForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+      >
+        <Form
+          form={profileForm}
+          layout="vertical"
+          onFinish={handleUpdateProfile}
+        >
+          <Form.Item
+            name="name"
+            label="姓名"
+            rules={[{ required: true, message: '请输入姓名' }]}
+          >
+            <Input placeholder="请输入姓名" />
+          </Form.Item>
+          
+          <Form.Item
+            name="department"
+            label="部门"
+          >
+            <Input placeholder="请输入部门" />
+          </Form.Item>
+          
+          <Form.Item
+            name="email"
+            label="邮箱"
+            rules={[{ type: 'email', message: '请输入有效的邮箱地址' }]}
+          >
+            <Input placeholder="请输入邮箱" />
+          </Form.Item>
+          
+          <Form.Item style={{ textAlign: 'right', marginBottom: 0 }}>
+            <Button 
+              style={{ marginRight: 8 }}
+              onClick={() => {
+                setIsProfileModalVisible(false);
+                profileForm.resetFields();
+              }}
+            >
+              取消
+            </Button>
+            <Button type="primary" htmlType="submit">
+              保存
+            </Button>
+            <Button 
+              style={{ marginLeft: 8 }}
+              onClick={() => {
+                setIsProfileModalVisible(false);
+                setIsPasswordModalVisible(true);
+              }}
+            >
+              修改密码
+            </Button>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 修改密码Modal */}
+      <Modal
+        title="修改密码"
+        open={isPasswordModalVisible}
+        onCancel={() => {
+          setIsPasswordModalVisible(false);
+          passwordForm.resetFields();
+        }}
+        footer={null}
+        width={400}
+      >
+        <Form
+          form={passwordForm}
+          layout="vertical"
+          onFinish={handleChangePassword}
+        >
+          <Form.Item
+            name="currentPassword"
+            label="当前密码"
+            rules={[{ required: true, message: '请输入当前密码' }]}
+          >
+            <Input.Password placeholder="请输入当前密码" />
+          </Form.Item>
+          
+          <Form.Item
+            name="newPassword"
+            label="新密码"
+            rules={[
+              { required: true, message: '请输入新密码' },
+              { min: 6, message: '密码长度不能少于6位' }
+            ]}
+          >
+            <Input.Password placeholder="请输入新密码" />
+          </Form.Item>
+          
+          <Form.Item
+            name="confirmPassword"
+            label="确认新密码"
+            dependencies={['newPassword']}
+            rules={[
+              { required: true, message: '请确认新密码' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('两次输入的密码不一致'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="请确认新密码" />
+          </Form.Item>
+          
+          <Form.Item style={{ textAlign: 'right', marginBottom: 0 }}>
+            <Button 
+              style={{ marginRight: 8 }}
+              onClick={() => {
+                setIsPasswordModalVisible(false);
+                passwordForm.resetFields();
+              }}
+            >
+              取消
+            </Button>
+            <Button type="primary" htmlType="submit">
+              确认修改
+            </Button>
+          </Form.Item>
+        </Form>
       </Modal>
     </Layout>
   );

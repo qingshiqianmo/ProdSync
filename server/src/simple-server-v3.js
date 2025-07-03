@@ -167,24 +167,30 @@ app.post('/api/users', authenticateToken, async (req, res) => {
       return res.status(403).json({ message: '权限不足' });
     }
 
-    const { username, password, name, identity, department, email } = req.body;
+    const { username, name, identity, department, email } = req.body;
     
-    if (!username || !password || !name || !identity) {
-      return res.status(400).json({ message: '用户名、密码、姓名和身份不能为空' });
+    if (!username || !name || !identity) {
+      return res.status(400).json({ message: '用户名、姓名和身份不能为空' });
     }
 
     if (!Object.values(IDENTITIES).includes(identity)) {
       return res.status(400).json({ message: '无效的身份类型' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // 使用默认密码test123
+    const defaultPassword = 'test123';
+    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
     
     const result = await dbRun(`
       INSERT INTO users_v3 (username, password, name, identity, department, email)
       VALUES (?, ?, ?, ?, ?, ?)
     `, [username, hashedPassword, name, identity, department, email]);
 
-    res.json({ message: '用户创建成功', userId: result.lastInsertRowid });
+    res.json({ 
+      message: '用户创建成功，默认密码为：test123', 
+      userId: result.lastInsertRowid,
+      defaultPassword: 'test123'
+    });
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
       return res.status(400).json({ message: '用户名已存在' });
@@ -194,46 +200,6 @@ app.post('/api/users', authenticateToken, async (req, res) => {
   }
 });
 
-// 快速创建测试账号
-app.post('/api/users/create-test-accounts', authenticateToken, async (req, res) => {
-  try {
-    const currentUser = await dbGet('SELECT * FROM users_v3 WHERE id = ?', [req.user.userId]);
-    
-    if (currentUser.identity !== IDENTITIES.ADMIN) {
-      return res.status(403).json({ message: '权限不足' });
-    }
-
-    const testUsers = [
-      { username: 'scheduler_test', name: '测试调度员', identity: IDENTITIES.PRODUCTION_SCHEDULER, department: '生产调度部' },
-      { username: 'leader_test', name: '测试生产领导', identity: IDENTITIES.PRODUCTION_LEADER, department: '生产部' },
-      { username: 'staff_test1', name: '测试职员1', identity: IDENTITIES.STAFF, department: '项目部' },
-      { username: 'staff_test2', name: '测试职员2', identity: IDENTITIES.STAFF, department: '设计部' }
-    ];
-
-    const password = 'test123';
-    const hashedPassword = await bcrypt.hash(password, 10);
-    let createdCount = 0;
-
-    for (const user of testUsers) {
-      try {
-        await dbRun(`
-          INSERT INTO users_v3 (username, password, name, identity, department, email)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `, [user.username, hashedPassword, user.name, user.identity, user.department, `${user.username}@company.com`]);
-        createdCount++;
-      } catch (error) {
-        if (error.code !== 'SQLITE_CONSTRAINT_UNIQUE') {
-          throw error;
-        }
-      }
-    }
-
-    res.json({ message: `成功创建 ${createdCount} 个测试账号，密码统一为: ${password}` });
-  } catch (error) {
-    console.error('创建测试账号错误:', error);
-    res.status(500).json({ message: '创建测试账号失败' });
-  }
-});
 
 // 获取任务列表
 app.get('/api/tasks', authenticateToken, async (req, res) => {
@@ -439,6 +405,41 @@ app.put('/api/tasks/:id/status', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('更新任务状态错误:', error);
     res.status(500).json({ message: '更新任务状态失败' });
+  }
+});
+
+// 更新任务基本信息
+app.put('/api/tasks/:id', authenticateToken, async (req, res) => {
+  try {
+    const currentUser = await dbGet('SELECT * FROM users_v3 WHERE id = ?', [req.user.userId]);
+    
+    if (currentUser.identity !== IDENTITIES.ADMIN && currentUser.identity !== IDENTITIES.PRODUCTION_SCHEDULER) {
+      return res.status(403).json({ message: '只有管理员和生产调度员可以修改任务' });
+    }
+
+    const taskId = req.params.id;
+    const { name, description, type, production_leader, executor, planned_start_date, planned_end_date } = req.body;
+    
+    if (!name || !type || !executor || !planned_start_date || !planned_end_date) {
+      return res.status(400).json({ message: '任务名称、类型、执行人和计划时间不能为空' });
+    }
+
+    if (!Object.values(TASK_TYPES).includes(type)) {
+      return res.status(400).json({ message: '无效的任务类型' });
+    }
+
+    // 更新任务
+    await dbRun(`
+      UPDATE tasks_v3 
+      SET name = ?, description = ?, type = ?, production_leader = ?, executor = ?, 
+          planned_start_date = ?, planned_end_date = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [name, description, type, production_leader, executor, planned_start_date, planned_end_date, taskId]);
+
+    res.json({ message: '任务更新成功' });
+  } catch (error) {
+    console.error('更新任务错误:', error);
+    res.status(500).json({ message: '更新任务失败' });
   }
 });
 
@@ -671,6 +672,70 @@ app.put('/api/tasks/:id/acknowledge', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error(`[ACK TASK ERROR /api/tasks/${req.params.id}/acknowledge]`, error);
     res.status(500).json({ message: '确认收到任务失败' });
+  }
+});
+
+// 用户修改自己的信息
+app.put('/api/user/profile', authenticateToken, async (req, res) => {
+  try {
+    const { name, department, email } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ message: '姓名不能为空' });
+    }
+
+    await dbRun(`
+      UPDATE users_v3 
+      SET name = ?, department = ?, email = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [name, department, email, req.user.userId]);
+
+    res.json({ message: '个人信息更新成功' });
+  } catch (error) {
+    console.error('更新个人信息错误:', error);
+    res.status(500).json({ message: '更新个人信息失败' });
+  }
+});
+
+// 用户修改自己的密码
+app.put('/api/user/password', authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: '当前密码和新密码不能为空' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: '新密码长度不能少于6位' });
+    }
+
+    // 验证当前密码
+    const user = await dbGet('SELECT password FROM users_v3 WHERE id = ?', [req.user.userId]);
+    
+    if (!user) {
+      return res.status(404).json({ message: '用户不存在' });
+    }
+
+    const isValidCurrentPassword = await bcrypt.compare(currentPassword, user.password);
+    
+    if (!isValidCurrentPassword) {
+      return res.status(400).json({ message: '当前密码错误' });
+    }
+
+    // 更新密码
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+    
+    await dbRun(`
+      UPDATE users_v3 
+      SET password = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [hashedNewPassword, req.user.userId]);
+
+    res.json({ message: '密码修改成功' });
+  } catch (error) {
+    console.error('修改密码错误:', error);
+    res.status(500).json({ message: '修改密码失败' });
   }
 });
 

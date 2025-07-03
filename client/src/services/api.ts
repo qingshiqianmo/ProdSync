@@ -75,7 +75,7 @@ export const authAPI = {
     return response.data;
   },
 
-  createUser: async (userData: Partial<User> & { password: string }): Promise<ApiResponse> => {
+  createUser: async (userData: Partial<User> & { password?: string }): Promise<ApiResponse> => {
     const response = await api.post('/users', userData);
     return response.data;
   },
@@ -87,11 +87,6 @@ export const authAPI = {
 
   deleteUser: async (id: number): Promise<ApiResponse> => {
     const response = await api.delete(`/users/${id}`);
-    return response.data;
-  },
-
-  createTestAccounts: async (): Promise<ApiResponse> => {
-    const response = await api.post('/users/create-test-accounts');
     return response.data;
   },
 };

@@ -1,33 +1,39 @@
 {
   "name": "prod-sync",
   "version": "1.0.0",
-  "description": "生产项目管理系统",
-  "main": "server.js",
+  "description": "生产项目管理系统 - 跨平台版本",
+  "main": "scripts/start.js",
   "engines": {
     "node": ">=16.0.0",
     "npm": ">=8.0.0"
   },
   "scripts": {
-    "start": "node server.js",
-    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "start": "node scripts/start.js",
+    "stop": "node scripts/stop.js",
+    "install-all": "node scripts/install.js",
+    "dev": "node scripts/start.js",
     "server": "cd server && npm run dev",
     "client": "cd client && npm start",
-    "build": "cd client && npm run build && npm run build:server",
-    "build:server": "cd server && npm install",
-    "install-all": "npm install && cd server && npm install && cd ../client && npm install",
-    "postinstall": "npm run build:server",
-    "heroku-postbuild": "npm run build"
+    "build": "cd client && npm run build",
+    "build:server": "cd server && npm run build",
+    "postinstall": "echo 'Run npm run install-all to install all dependencies'",
+    "test": "echo 'No tests specified' && exit 0"
   },
   "keywords": [
     "项目管理",
     "生产调度",
     "角色管理",
+    "跨平台",
     "express",
     "react",
     "sqlite"
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qingshiqianmo/ProdSync.git"
+  },
   "devDependencies": {
     "concurrently": "^8.2.2"
   },

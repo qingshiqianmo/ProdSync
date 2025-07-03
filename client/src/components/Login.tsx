@@ -80,11 +80,7 @@ const Login: React.FC = () => {
           </Form.Item>
         </Form>
 
-        <div style={{ textAlign: 'center', marginTop: 16 }}>
-          <p style={{ color: '#999', fontSize: 12 }}>
-            默认管理员账户：admin / admin123
-          </p>
-        </div>
+
       </Card>
     </div>
   );

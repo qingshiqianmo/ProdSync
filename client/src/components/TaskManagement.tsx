@@ -61,6 +61,7 @@ const TaskManagement: React.FC = () => {
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [isDetailModalVisible, setIsDetailModalVisible] = useState(false);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [editMilestones, setEditMilestones] = useState<Milestone[]>([]);
   const [form] = Form.useForm();
   const [editForm] = Form.useForm();
 
@@ -98,14 +99,14 @@ const TaskManagement: React.FC = () => {
     }
   };
 
-  const getTaskStatusColor = (status: TaskStatus, isOverdue: boolean = false) => {
+  const getTaskStatusColor = (status: TaskStatus, isOverdue: boolean = false, isCompletedOverdue: boolean = false) => {
     if (isOverdue && status !== TaskStatus.COMPLETED) {
       return 'error'; // 逾期显示红色
     }
     switch (status) {
       case TaskStatus.PENDING: return 'default';
       case TaskStatus.IN_PROGRESS: return 'processing';
-      case TaskStatus.COMPLETED: return 'success';
+      case TaskStatus.COMPLETED: return isCompletedOverdue ? 'warning' : 'success'; // 逾期完成显示橙色
       default: return 'default';
     }
   };
@@ -119,14 +120,14 @@ const TaskManagement: React.FC = () => {
     }
   };
 
-  const getTaskStatusText = (status: TaskStatus, isOverdue: boolean = false) => {
+  const getTaskStatusText = (status: TaskStatus, isOverdue: boolean = false, isCompletedOverdue: boolean = false) => {
     if (isOverdue && status !== TaskStatus.COMPLETED) {
       return '已逾期';
     }
     switch (status) {
       case TaskStatus.PENDING: return '待处理';
       case TaskStatus.IN_PROGRESS: return '进行中';
-      case TaskStatus.COMPLETED: return '已完成';
+      case TaskStatus.COMPLETED: return isCompletedOverdue ? '逾期完成' : '已完成';
       default: return '未知';
     }
   };
@@ -195,6 +196,28 @@ const TaskManagement: React.FC = () => {
     setMilestones(newMilestones);
   };
 
+  const addEditMilestone = () => {
+    const newMilestone: Milestone = {
+      name: '',
+      description: '',
+      planned_date: '',
+      status: MilestoneStatus.PENDING,
+      order_index: editMilestones.length + 1
+    };
+    setEditMilestones([...editMilestones, newMilestone]);
+  };
+
+  const removeEditMilestone = (index: number) => {
+    const newMilestones = editMilestones.filter((_, i) => i !== index);
+    setEditMilestones(newMilestones);
+  };
+
+  const updateEditMilestone = (index: number, field: string, value: any) => {
+    const newMilestones = [...editMilestones];
+    (newMilestones[index] as any)[field] = value;
+    setEditMilestones(newMilestones);
+  };
+
   const handleCreateTask = async (values: any) => {
     try {
       const createData: CreateTaskRequest = {
@@ -247,22 +270,40 @@ const TaskManagement: React.FC = () => {
   };
 
   const canEditTask = (task: Task) => {
+    // 已完成的任务不能修改
+    if (task.status === TaskStatus.COMPLETED) {
+      return false;
+    }
     if (user?.identity === UserIdentity.ADMIN) return true;
     if (user?.identity === UserIdentity.PRODUCTION_SCHEDULER) return true;
     return false;
   };
 
-  const openEditModal = (task: Task) => {
-    setSelectedTask(task);
-    editForm.setFieldsValue({
-      name: task.name,
-      description: task.description,
-      type: task.type,
-      production_leader: task.production_leader,
-      executor: task.executor,
-      dateRange: [dayjs(task.planned_start_date), dayjs(task.planned_end_date)]
-    });
-    setIsEditModalVisible(true);
+  const openEditModal = async (task: Task) => {
+    try {
+      // 获取任务详情（包含里程碑）
+      const taskDetail = await taskAPI.getTask(task.id);
+      setSelectedTask(taskDetail);
+      editForm.setFieldsValue({
+        name: taskDetail.name,
+        description: taskDetail.description,
+        type: taskDetail.type,
+        production_leader: taskDetail.production_leader,
+        executor: taskDetail.executor,
+        dateRange: [dayjs(taskDetail.planned_start_date), dayjs(taskDetail.planned_end_date)]
+      });
+      
+      // 设置编辑里程碑数据
+      if (taskDetail.milestones && taskDetail.milestones.length > 0) {
+        setEditMilestones([...taskDetail.milestones]);
+      } else {
+        setEditMilestones([]);
+      }
+      
+      setIsEditModalVisible(true);
+    } catch (error) {
+      message.error('获取任务详情失败');
+    }
   };
 
   const handleUpdateTask = async (values: any) => {
@@ -279,11 +320,52 @@ const TaskManagement: React.FC = () => {
         planned_end_date: values.dateRange[1].format('YYYY-MM-DD')
       };
       
+      // 更新任务基本信息
       await taskAPI.updateTask(selectedTask.id, updateData);
+      
+      // 处理里程碑更新
+      const originalMilestones = selectedTask.milestones || [];
+      const updatedMilestones = editMilestones;
+      
+      // 更新现有里程碑
+      for (const milestone of updatedMilestones) {
+        if (milestone.id) {
+          // 已有里程碑，需要更新
+          const originalMilestone = originalMilestones.find(m => m.id === milestone.id);
+          if (originalMilestone) {
+            // 检查是否有变化
+            if (originalMilestone.name !== milestone.name || 
+                originalMilestone.description !== milestone.description ||
+                originalMilestone.planned_date !== milestone.planned_date) {
+              await taskAPI.updateMilestone(milestone.id, {
+                name: milestone.name,
+                description: milestone.description,
+                planned_date: milestone.planned_date
+              });
+            }
+          }
+        } else {
+          // 新增里程碑
+          await taskAPI.createMilestone(selectedTask.id, {
+            name: milestone.name,
+            description: milestone.description,
+            planned_date: milestone.planned_date
+          });
+        }
+      }
+      
+      // 删除已移除的里程碑
+      for (const originalMilestone of originalMilestones) {
+        if (originalMilestone.id && !updatedMilestones.find(m => m.id === originalMilestone.id)) {
+          await taskAPI.deleteMilestone(originalMilestone.id);
+        }
+      }
+      
       message.success('任务更新成功');
       setIsEditModalVisible(false);
       editForm.resetFields();
       setSelectedTask(null);
+      setEditMilestones([]);
       loadData();
     } catch (error) {
       message.error('任务更新失败');
@@ -313,9 +395,9 @@ const TaskManagement: React.FC = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: TaskStatus) => (
-        <Tag color={getTaskStatusColor(status)}>
-          {getTaskStatusText(status)}
+      render: (status: TaskStatus, record: Task) => (
+        <Tag color={getTaskStatusColor(status, false, record.completed_overdue)}>
+          {getTaskStatusText(status, false, record.completed_overdue)}
         </Tag>
       ),
     },
@@ -830,6 +912,59 @@ const TaskManagement: React.FC = () => {
           >
             <TextArea rows={3} placeholder="请输入任务描述" />
           </Form.Item>
+
+          {/* 里程碑编辑 */}
+          <Form.Item label="里程碑节点" style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8 }}>
+              <Button type="dashed" onClick={addEditMilestone} block>
+                + 添加里程碑
+              </Button>
+            </div>
+            
+            {editMilestones.map((milestone, index) => (
+              <Card key={index} size="small" style={{ marginBottom: 8 }}>
+                <Row gutter={16} align="middle">
+                  <Col span={6}>
+                    <Input
+                      placeholder="里程碑名称"
+                      value={milestone.name}
+                      onChange={(e) => updateEditMilestone(index, 'name', e.target.value)}
+                    />
+                  </Col>
+                  <Col span={8}>
+                    <Input
+                      placeholder="里程碑描述"
+                      value={milestone.description}
+                      onChange={(e) => updateEditMilestone(index, 'description', e.target.value)}
+                    />
+                  </Col>
+                  <Col span={6}>
+                    <DatePicker
+                      style={{ width: '100%' }}
+                      placeholder="计划时间"
+                      value={milestone.planned_date ? dayjs(milestone.planned_date) : null}
+                      onChange={(date) => updateEditMilestone(index, 'planned_date', date?.format('YYYY-MM-DD') || '')}
+                    />
+                  </Col>
+                  <Col span={2}>
+                    <Button
+                      type="link"
+                      danger
+                      size="small"
+                      onClick={() => removeEditMilestone(index)}
+                    >
+                      删除
+                    </Button>
+                  </Col>
+                  <Col span={2}>
+                    {milestone.status === MilestoneStatus.COMPLETED && (
+                      <Tag color="green">已完成</Tag>
+                    )}
+                  </Col>
+                </Row>
+              </Card>
+            ))}
+          </Form.Item>
           
           <Form.Item style={{ textAlign: 'right', marginBottom: 0, marginTop: 24 }}>
             <Space>
@@ -837,6 +972,7 @@ const TaskManagement: React.FC = () => {
                 setIsEditModalVisible(false);
                 editForm.resetFields();
                 setSelectedTask(null);
+                setEditMilestones([]);
               }}>
                 取消
               </Button>
@@ -887,8 +1023,8 @@ const TaskManagement: React.FC = () => {
             <Row gutter={16} style={{ marginBottom: 16 }}>
               <Col span={24}>
                 <strong>状态：</strong>
-                <Tag color={getTaskStatusColor(selectedTask.status)} style={{ marginLeft: 8 }}>
-                  {getTaskStatusText(selectedTask.status)}
+                <Tag color={getTaskStatusColor(selectedTask.status, false, selectedTask.completed_overdue)} style={{ marginLeft: 8 }}>
+                  {getTaskStatusText(selectedTask.status, false, selectedTask.completed_overdue)}
                 </Tag>
               </Col>
             </Row>

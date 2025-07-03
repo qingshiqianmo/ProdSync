@@ -89,6 +89,11 @@ export const authAPI = {
     const response = await api.delete(`/users/${id}`);
     return response.data;
   },
+
+  resetUserPassword: async (id: number, newPassword: string): Promise<ApiResponse> => {
+    const response = await api.put(`/users/${id}/reset-password`, { newPassword });
+    return response.data;
+  },
 };
 
 // 任务相关API
@@ -122,6 +127,16 @@ export const taskAPI = {
   updateMilestoneStatus: async (milestoneId: number, data: UpdateMilestoneRequest): Promise<{ message: string; milestone: Milestone }> => {
     const response = await api.put(`/milestones/${milestoneId}/status`, data);
     return response.data; // Backend now returns { message: string, milestone: Milestone }
+  },
+
+  updateMilestone: async (milestoneId: number, milestoneData: { name: string; description?: string; planned_date: string }): Promise<ApiResponse> => {
+    const response = await api.put(`/milestones/${milestoneId}`, milestoneData);
+    return response.data;
+  },
+
+  deleteMilestone: async (milestoneId: number): Promise<ApiResponse> => {
+    const response = await api.delete(`/milestones/${milestoneId}`);
+    return response.data;
   },
 
   updateTask: async (id: number, taskData: Partial<CreateTaskRequest>): Promise<ApiResponse> => {

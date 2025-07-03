@@ -387,11 +387,17 @@ app.put('/api/tasks/:id/status', authenticateToken, async (req, res) => {
       params.push(actual_end_date || now);
 
       // 如果任务完成时还没有实际开始时间，也一并记录
-      const existingTask = await dbGet('SELECT actual_start_date FROM tasks_v3 WHERE id = ?', [taskId]);
+      const existingTask = await dbGet('SELECT actual_start_date, planned_end_date FROM tasks_v3 WHERE id = ?', [taskId]);
       if (!existingTask.actual_start_date) {
           updateFields += ', actual_start_date = ?';
           params.push(actual_start_date || now); // if completed, start is also now or provided
       }
+
+      // 检查是否逾期完成
+      const completionDate = actual_end_date || now;
+      const isOverdue = new Date(completionDate) > new Date(existingTask.planned_end_date);
+      updateFields += ', completed_overdue = ?';
+      params.push(isOverdue ? 1 : 0);
     }
 
     params.push(taskId);
@@ -623,6 +629,35 @@ app.post('/api/tasks/:id/milestones', authenticateToken, async (req, res) => {
   }
 });
 
+// 更新里程碑基本信息
+app.put('/api/milestones/:id', authenticateToken, async (req, res) => {
+  try {
+    const currentUser = await dbGet('SELECT * FROM users_v3 WHERE id = ?', [req.user.userId]);
+    
+    if (currentUser.identity !== IDENTITIES.ADMIN && currentUser.identity !== IDENTITIES.PRODUCTION_SCHEDULER) {
+      return res.status(403).json({ message: '只有管理员和生产调度员可以修改里程碑' });
+    }
+
+    const milestoneId = req.params.id;
+    const { name, description, planned_date } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ message: '里程碑名称不能为空' });
+    }
+
+    await dbRun(`
+      UPDATE milestones 
+      SET name = ?, description = ?, planned_date = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [name, description || '', planned_date, milestoneId]);
+    
+    res.json({ message: '里程碑更新成功' });
+  } catch (error) {
+    console.error('更新里程碑错误:', error);
+    res.status(500).json({ message: '更新里程碑失败' });
+  }
+});
+
 // 删除里程碑
 app.delete('/api/milestones/:id', authenticateToken, async (req, res) => {
   try {
@@ -736,6 +771,49 @@ app.put('/api/user/password', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('修改密码错误:', error);
     res.status(500).json({ message: '修改密码失败' });
+  }
+});
+
+// 管理员重置用户密码
+app.put('/api/users/:id/reset-password', authenticateToken, async (req, res) => {
+  try {
+    const currentUser = await dbGet('SELECT * FROM users_v3 WHERE id = ?', [req.user.userId]);
+    
+    if (currentUser.identity !== IDENTITIES.ADMIN) {
+      return res.status(403).json({ message: '只有管理员可以重置用户密码' });
+    }
+
+    const targetUserId = req.params.id;
+    const { newPassword } = req.body;
+    
+    if (!newPassword) {
+      return res.status(400).json({ message: '新密码不能为空' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: '新密码长度不能少于6位' });
+    }
+
+    // 检查目标用户是否存在
+    const targetUser = await dbGet('SELECT id, name FROM users_v3 WHERE id = ?', [targetUserId]);
+    
+    if (!targetUser) {
+      return res.status(404).json({ message: '用户不存在' });
+    }
+
+    // 更新密码
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+    
+    await dbRun(`
+      UPDATE users_v3 
+      SET password = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [hashedNewPassword, targetUserId]);
+
+    res.json({ message: `用户 ${targetUser.name} 的密码重置成功` });
+  } catch (error) {
+    console.error('重置密码错误:', error);
+    res.status(500).json({ message: '重置密码失败' });
   }
 });
 

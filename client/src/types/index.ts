@@ -77,6 +77,7 @@ export interface Task {
   planned_end_date: string;
   actual_start_date?: string;
   actual_end_date?: string;
+  completed_overdue?: boolean; // 记录是否逾期完成
   acknowledged_by_leader_at?: string; // New field
   created_at: string;
   updated_at: string;

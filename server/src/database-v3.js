@@ -74,6 +74,7 @@ const initDatabaseV3 = () => {
       planned_end_date DATE NOT NULL,
       actual_start_date DATE,
       actual_end_date DATE,
+      completed_overdue BOOLEAN DEFAULT 0, -- 记录是否逾期完成
       acknowledged_by_leader_at DATETIME, -- New field for leader acknowledgement
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -109,18 +110,40 @@ const initDatabaseV3 = () => {
 const insertInitialDataV3 = async () => {
   console.log('插入初始用户数据（V3版本）...');
   
-  const hashedPassword = await bcrypt.hash('admin123', 10);
+  // 检查管理员账户是否存在
+  const existingAdmin = db.prepare('SELECT id, username, name FROM users_v3 WHERE username = ?').get('admin');
   
-  // 插入管理员账号
-  try {
-      db.prepare(`
-    INSERT OR IGNORE INTO users_v3 (id, username, password, name, identity, department, email)
-    VALUES (1, 'admin', ?, '系统管理员', 'admin', '管理部', 'admin@company.com')
-  `).run(hashedPassword);
+  if (existingAdmin) {
+    console.log('==========================================');
+    console.log('🔐 管理员账户信息');
+    console.log('==========================================');
+    console.log(`👤 用户名: admin`);
+    console.log(`📛 姓名: ${existingAdmin.name}`);
+    console.log(`💡 提示: 管理员账户已存在，密码已保留您的修改`);
+    console.log(`🔧 如需重置密码，请在用户管理中操作`);
+    console.log('==========================================');
+  } else {
+    // 创建新的管理员账户
+    const defaultPassword = 'admin123';
+    const hashedPassword = await bcrypt.hash(defaultPassword, 10);
     
-    console.log('管理员账号创建成功');
-  } catch (error) {
-    console.log('管理员账号已存在');
+    try {
+      db.prepare(`
+        INSERT INTO users_v3 (id, username, password, name, identity, department, email)
+        VALUES (1, 'admin', ?, '系统管理员', 'admin', '管理部', 'admin@company.com')
+      `).run(hashedPassword);
+      
+      console.log('==========================================');
+      console.log('🎉 管理员账户创建成功');
+      console.log('==========================================');
+      console.log(`👤 用户名: admin`);
+      console.log(`🔑 密码: ${defaultPassword}`);
+      console.log(`📛 姓名: 系统管理员`);
+      console.log(`💡 提示: 请及时修改默认密码`);
+      console.log('==========================================');
+    } catch (error) {
+      console.error('创建管理员账户失败:', error);
+    }
   }
 
   // 插入一些示例任务数据 - 已注释掉，以防止每次重启都添加
@@ -171,10 +194,28 @@ const insertInitialDataV3 = async () => {
   console.log('初始数据插入完成（V3版本），示例任务已禁用自动插入。');
 };
 
+// 添加新字段的迁移
+const addCompletedOverdueField = () => {
+  try {
+    // 检查字段是否已存在
+    const tableInfo = db.prepare("PRAGMA table_info(tasks_v3)").all();
+    const hasCompletedOverdueField = tableInfo.some(column => column.name === 'completed_overdue');
+    
+    if (!hasCompletedOverdueField) {
+      console.log('添加completed_overdue字段到tasks_v3表...');
+      db.exec(`ALTER TABLE tasks_v3 ADD COLUMN completed_overdue BOOLEAN DEFAULT 0`);
+      console.log('completed_overdue字段添加成功');
+    }
+  } catch (error) {
+    console.error('添加completed_overdue字段失败:', error);
+  }
+};
+
 // 数据库迁移到V3
 const migrateToV3 = async () => {
   try {
     initDatabaseV3();
+    addCompletedOverdueField(); // 添加新字段迁移
     await insertInitialDataV3();
     console.log('数据库V3迁移完成！');
   } catch (error) {

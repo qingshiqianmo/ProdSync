@@ -86,12 +86,12 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const getTaskStatusColor = (status: TaskStatus, isOverdue: boolean = false) => {
+  const getTaskStatusColor = (status: TaskStatus, isOverdue: boolean = false, isCompletedOverdue: boolean = false) => {
     if (isOverdue && status !== TaskStatus.COMPLETED) {
       return 'error'; // 逾期显示红色
     }
     switch (status) {
-      case TaskStatus.COMPLETED: return 'success';
+      case TaskStatus.COMPLETED: return isCompletedOverdue ? 'warning' : 'success'; // 逾期完成显示橙色
       case TaskStatus.IN_PROGRESS: return 'processing';
       case TaskStatus.PENDING: return 'default';
       default: return 'default';
@@ -107,12 +107,12 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const getTaskStatusText = (status: TaskStatus, isOverdue: boolean = false) => {
+  const getTaskStatusText = (status: TaskStatus, isOverdue: boolean = false, isCompletedOverdue: boolean = false) => {
     if (isOverdue && status !== TaskStatus.COMPLETED) {
       return '已逾期';
     }
     switch (status) {
-      case TaskStatus.COMPLETED: return '已完成';
+      case TaskStatus.COMPLETED: return isCompletedOverdue ? '逾期完成' : '已完成';
       case TaskStatus.IN_PROGRESS: return '进行中';
       case TaskStatus.PENDING: return '待处理';
       default: return status;
@@ -265,9 +265,9 @@ const Dashboard: React.FC = () => {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: TaskStatus) => (
-        <Tag color={getTaskStatusColor(status)}>
-          {getTaskStatusText(status)}
+      render: (status: TaskStatus, record: Task) => (
+        <Tag color={getTaskStatusColor(status, false, record.completed_overdue)}>
+          {getTaskStatusText(status, false, record.completed_overdue)}
         </Tag>
       ),
     },
@@ -390,24 +390,60 @@ const Dashboard: React.FC = () => {
       </Sider>
       
       <Layout>
-        <Header style={{ background: '#fff', padding: '0 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #f0f0f0' }}>
-          <Title level={3} style={{ margin: 0 }}>
+        <Header style={{ background: '#fff', padding: '0 24px', display: 'flex', alignItems: 'center', borderBottom: '1px solid #f0f0f0' }}>
+          <Title level={3} style={{ margin: 0, flex: 1 }}>
             {currentView === 'dashboard' && '仪表板'}
             {currentView === 'tasks' && '任务管理'}
             {currentView === 'users' && '用户管理'}
           </Title>
           
-          <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-            <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Avatar icon={<UserOutlined />} />
-              <div style={{ minWidth: '80px' }}>
-                <div style={{ fontWeight: 'bold', whiteSpace: 'nowrap' }}>{user?.name}</div>
-                <div style={{ fontSize: '12px', color: '#666', whiteSpace: 'nowrap' }}>
-                  {user?.identity && getIdentityText(user.identity)}
+          <div style={{ 
+            flexShrink: 0, 
+            maxWidth: '280px', 
+            width: 'auto',
+            marginLeft: '16px'
+          }}>
+            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
+              <div style={{ 
+                cursor: 'pointer', 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '8px',
+                padding: '8px 12px',
+                borderRadius: '6px'
+              }}>
+                <Avatar icon={<UserOutlined />} size={32} />
+                <div style={{ 
+                  minWidth: 0,
+                  flex: 1,
+                  overflow: 'hidden'
+                }}>
+                  <div style={{ 
+                    fontWeight: 'bold', 
+                    fontSize: '14px',
+                    lineHeight: '20px',
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '180px'
+                  }}>
+                    {user?.name}
+                  </div>
+                  <div style={{ 
+                    fontSize: '12px', 
+                    color: '#666',
+                    lineHeight: '16px',
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '180px'
+                  }}>
+                    {user?.identity && getIdentityText(user.identity)}
+                  </div>
                 </div>
               </div>
-            </div>
-          </Dropdown>
+            </Dropdown>
+          </div>
         </Header>
         
         <Content style={{ margin: '24px', background: '#f0f2f5' }}>
@@ -529,8 +565,8 @@ const Dashboard: React.FC = () => {
                             </div>
                           </div>
                           <div style={{ textAlign: 'right' }}>
-                            <Tag color={getTaskStatusColor(task.status, isTaskOverdue(task))}>
-                              {getTaskStatusText(task.status, isTaskOverdue(task))}
+                            <Tag color={getTaskStatusColor(task.status, isTaskOverdue(task), task.completed_overdue)}>
+                              {getTaskStatusText(task.status, isTaskOverdue(task), task.completed_overdue)}
                             </Tag>
                             <div style={{ fontSize: '12px', color: '#666', marginTop: 4 }}>
                               {dayjs(task.planned_end_date).format('MM-DD')}
@@ -590,8 +626,8 @@ const Dashboard: React.FC = () => {
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="任务状态">
-                <Tag color={getTaskStatusColor(selectedTask.status, isTaskOverdue(selectedTask))}>
-                  {getTaskStatusText(selectedTask.status, isTaskOverdue(selectedTask))}
+                <Tag color={getTaskStatusColor(selectedTask.status, isTaskOverdue(selectedTask), selectedTask.completed_overdue)}>
+                  {getTaskStatusText(selectedTask.status, isTaskOverdue(selectedTask), selectedTask.completed_overdue)}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="创建者">

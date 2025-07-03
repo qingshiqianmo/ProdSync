@@ -21,7 +21,8 @@ import {
   EditOutlined,
   DeleteOutlined,
   EyeOutlined,
-  UserOutlined
+  UserOutlined,
+  KeyOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useAuth } from '../contexts/AuthContext';
@@ -39,8 +40,10 @@ const UserManagement: React.FC = () => {
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [isDetailModalVisible, setIsDetailModalVisible] = useState(false);
+  const [isResetPasswordModalVisible, setIsResetPasswordModalVisible] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [form] = Form.useForm();
+  const [resetPasswordForm] = Form.useForm();
 
   const loadUsers = async () => {
     setLoading(true);
@@ -127,6 +130,25 @@ const UserManagement: React.FC = () => {
     } catch (error: any) {
       message.error(error.response?.data?.message || '用户删除失败');
     }
+  };
+
+  const handleResetPassword = async (values: any) => {
+    if (!selectedUser) return;
+    
+    try {
+      await authAPI.resetUserPassword(selectedUser.id, values.newPassword);
+      message.success(`用户 ${selectedUser.name} 的密码重置成功`);
+      setIsResetPasswordModalVisible(false);
+      resetPasswordForm.resetFields();
+      setSelectedUser(null);
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '重置密码失败');
+    }
+  };
+
+  const openResetPasswordModal = (user: User) => {
+    setSelectedUser(user);
+    setIsResetPasswordModalVisible(true);
   };
 
   const openEditModal = (user: User) => {
@@ -221,6 +243,17 @@ const UserManagement: React.FC = () => {
               size="small"
             >
               编辑
+            </Button>
+          )}
+
+          {canEditUser(record) && record.id !== currentUser?.id && (
+            <Button
+              type="link"
+              icon={<KeyOutlined />}
+              onClick={() => openResetPasswordModal(record)}
+              size="small"
+            >
+              重置密码
             </Button>
           )}
           
@@ -461,6 +494,69 @@ const UserManagement: React.FC = () => {
               </Button>
               <Button type="primary" htmlType="submit">
                 更新
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 重置密码Modal */}
+      <Modal
+        title={`重置用户密码 - ${selectedUser?.name}`}
+        open={isResetPasswordModalVisible}
+        onCancel={() => {
+          setIsResetPasswordModalVisible(false);
+          resetPasswordForm.resetFields();
+          setSelectedUser(null);
+        }}
+        footer={null}
+        width={400}
+      >
+        <Form
+          form={resetPasswordForm}
+          layout="vertical"
+          onFinish={handleResetPassword}
+        >
+          <Form.Item
+            name="newPassword"
+            label="新密码"
+            rules={[
+              { required: true, message: '请输入新密码' },
+              { min: 6, message: '密码长度不能少于6位' }
+            ]}
+          >
+            <Input.Password placeholder="请输入新密码" />
+          </Form.Item>
+          
+          <Form.Item
+            name="confirmPassword"
+            label="确认密码"
+            rules={[
+              { required: true, message: '请再次输入新密码' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('newPassword') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('两次输入的密码不一致'));
+                },
+              }),
+            ]}
+          >
+            <Input.Password placeholder="请再次输入新密码" />
+          </Form.Item>
+          
+          <Form.Item style={{ textAlign: 'right', marginBottom: 0 }}>
+            <Space>
+              <Button onClick={() => {
+                setIsResetPasswordModalVisible(false);
+                resetPasswordForm.resetFields();
+                setSelectedUser(null);
+              }}>
+                取消
+              </Button>
+              <Button type="primary" htmlType="submit">
+                重置密码
               </Button>
             </Space>
           </Form.Item>

@@ -41,6 +41,23 @@ code {
   color: #666;
 }
 
+/* 任务状态行颜色 */
+.task-row-overdue {
+  background-color: #ffebee !important; /* 浅红色背景 - 逾期任务 */
+}
+
+.task-row-overdue:hover {
+  background-color: #ffcdd2 !important; /* 悬停时稍深的红色 */
+}
+
+.task-row-approaching-deadline {
+  background-color: #fff8e1 !important; /* 浅黄色背景 - 临近截止日期 */
+}
+
+.task-row-approaching-deadline:hover {
+  background-color: #ffecb3 !important; /* 悬停时稍深的黄色 */
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
   .ant-layout-sider {

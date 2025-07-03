@@ -598,6 +598,28 @@ const TaskManagement: React.FC = () => {
     return dayjs(today).isAfter(dayjs(task.planned_end_date));
   };
 
+  // 检查任务是否在2天内到期
+  const isTaskApproachingDeadline = (task: Task) => {
+    if (task.status === TaskStatus.COMPLETED) return false;
+    const today = dayjs();
+    const endDate = dayjs(task.planned_end_date);
+    const diffInDays = endDate.diff(today, 'day');
+    return diffInDays >= 0 && diffInDays < 2; // 剩余0-1天（不含2天）
+  };
+
+  // 获取任务行的样式类名
+  const getTaskRowClassName = (task: Task) => {
+    // 进行中且已逾期：红色背景
+    if (task.status === TaskStatus.IN_PROGRESS && isTaskOverdue(task)) {
+      return 'task-row-overdue';
+    }
+    // 距离完成时间小于2天：黄色背景
+    if (isTaskApproachingDeadline(task)) {
+      return 'task-row-approaching-deadline';
+    }
+    return '';
+  };
+
   // 过滤逾期任务
   const filterOverdueTasks = () => {
     return tasks.filter(task => isTaskOverdue(task));
@@ -609,6 +631,7 @@ const TaskManagement: React.FC = () => {
       dataSource={filteredTasks}
       rowKey="id"
       loading={loading}
+      rowClassName={getTaskRowClassName}
       pagination={{
         pageSize: 10,
         showSizeChanger: true,

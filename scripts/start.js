@@ -33,8 +33,15 @@ class ProdSyncLauncher {
         ? `netstat -ano | findstr :${port}`
         : `lsof -i :${port}`;
       
-      exec(command, (error, stdout) => {
-        resolve(stdout.trim().length > 0);
+      exec(command, (error, stdout, stderr) => {
+        if (error) {
+          // 没有找到端口占用，返回false
+          resolve(false);
+        } else {
+          // 检查输出是否包含LISTENING状态
+          const hasListening = stdout.includes('LISTENING');
+          resolve(hasListening);
+        }
       });
     });
   }
@@ -42,9 +49,50 @@ class ProdSyncLauncher {
   async killPortProcess(port) {
     return new Promise((resolve) => {
       if (this.isWindows) {
-        exec(`for /f "tokens=5" %a in ('netstat -ano ^| findstr :${port}') do taskkill /f /pid %a`, resolve);
+        // Windows下先查找进程ID，然后终止
+        exec(`netstat -ano | findstr :${port}`, (error, stdout) => {
+          if (error || !stdout.trim()) {
+            resolve();
+            return;
+          }
+          
+          // 解析输出获取PID
+          const lines = stdout.trim().split('\n');
+          const pids = [];
+          
+          for (const line of lines) {
+            if (line.includes('LISTENING')) {
+              const parts = line.trim().split(/\s+/);
+              const pid = parts[parts.length - 1];
+              if (pid && !isNaN(pid)) {
+                pids.push(pid);
+              }
+            }
+          }
+          
+          if (pids.length === 0) {
+            resolve();
+            return;
+          }
+          
+          // 终止所有相关进程
+          const killPromises = pids.map(pid => {
+            return new Promise((killResolve) => {
+              exec(`taskkill /F /PID ${pid}`, () => {
+                killResolve();
+              });
+            });
+          });
+          
+          Promise.all(killPromises).then(() => {
+            resolve();
+          });
+        });
       } else {
-        exec(`lsof -ti:${port} | xargs kill -9`, resolve);
+        exec(`lsof -ti:${port} | xargs kill -9`, (error) => {
+          // 忽略错误，因为可能没有进程在运行
+          resolve();
+        });
       }
     });
   }
@@ -76,40 +124,64 @@ class ProdSyncLauncher {
       this.log('安装根目录依赖...');
       const rootInstall = spawn('npm', ['install'], { 
         cwd: path.join(__dirname, '..'),
-        stdio: 'inherit'
+        stdio: 'inherit',
+        shell: this.isWindows
       });
 
       rootInstall.on('close', (code) => {
         if (code === 0) {
+          this.log('根目录依赖安装完成', 'success');
           this.log('安装服务器依赖...');
           const serverInstall = spawn('npm', ['install'], { 
             cwd: path.join(__dirname, '..', 'server'),
-            stdio: 'inherit'
+            stdio: 'inherit',
+            shell: this.isWindows
           });
 
           serverInstall.on('close', (code) => {
             if (code === 0) {
+              this.log('服务器依赖安装完成', 'success');
               this.log('安装客户端依赖...');
               const clientInstall = spawn('npm', ['install'], { 
                 cwd: path.join(__dirname, '..', 'client'),
-                stdio: 'inherit'
+                stdio: 'inherit',
+                shell: this.isWindows
               });
 
               clientInstall.on('close', (code) => {
                 if (code === 0) {
+                  this.log('客户端依赖安装完成', 'success');
                   this.log('所有依赖安装完成', 'success');
                   resolve();
                 } else {
+                  this.log('客户端依赖安装失败', 'error');
                   reject(new Error('客户端依赖安装失败'));
                 }
               });
+
+              clientInstall.on('error', (error) => {
+                this.log(`客户端依赖安装出错: ${error.message}`, 'error');
+                reject(error);
+              });
             } else {
+              this.log('服务器依赖安装失败', 'error');
               reject(new Error('服务器依赖安装失败'));
             }
           });
+
+          serverInstall.on('error', (error) => {
+            this.log(`服务器依赖安装出错: ${error.message}`, 'error');
+            reject(error);
+          });
         } else {
+          this.log('根目录依赖安装失败', 'error');
           reject(new Error('根目录依赖安装失败'));
         }
+      });
+
+      rootInstall.on('error', (error) => {
+        this.log(`根目录依赖安装出错: ${error.message}`, 'error');
+        reject(error);
       });
     });
   }
@@ -118,7 +190,10 @@ class ProdSyncLauncher {
     return new Promise((resolve, reject) => {
       this.log('启动后端服务器...');
       
-      const serverProcess = spawn('npm', ['run', 'dev'], {
+      // Windows下使用start命令而不是dev命令，避免nodemon的问题
+      const startCommand = this.isWindows ? 'start' : 'dev';
+      
+      const serverProcess = spawn('npm', ['run', startCommand], {
         cwd: path.join(__dirname, '..', 'server'),
         stdio: 'pipe',
         shell: this.isWindows
@@ -140,17 +215,31 @@ class ProdSyncLauncher {
         }
       });
 
+      serverProcess.on('error', (error) => {
+        this.log(`[SERVER] 启动错误: ${error.message}`, 'error');
+        reject(error);
+      });
+
       // 等待服务器启动
-      setTimeout(() => {
-        this.checkPort(this.serverPort).then(isRunning => {
-          if (isRunning) {
-            this.log('后端服务器启动成功', 'success');
-            resolve();
-          } else {
-            reject(new Error('后端服务器启动失败'));
-          }
-        });
-      }, 5000);
+      let checkCount = 0;
+      const maxChecks = 15; // 最多检查15次，共1.5分钟
+      
+      const checkInterval = setInterval(async () => {
+        checkCount++;
+        const isRunning = await this.checkPort(this.serverPort);
+        
+        if (isRunning) {
+          clearInterval(checkInterval);
+          this.log('后端服务器启动成功', 'success');
+          resolve();
+        } else if (checkCount >= maxChecks) {
+          clearInterval(checkInterval);
+          this.log('后端服务器启动超时', 'error');
+          reject(new Error('后端服务器启动超时'));
+        } else {
+          this.log(`[SERVER] 等待启动中... (${checkCount}/${maxChecks})`, 'info');
+        }
+      }, 6000); // 每6秒检查一次
     });
   }
 
@@ -158,7 +247,10 @@ class ProdSyncLauncher {
     return new Promise((resolve, reject) => {
       this.log('启动前端应用...');
       
-      const clientProcess = spawn('npm', ['start'], {
+      // 根据平台选择启动命令
+      const startCommand = this.isWindows ? 'start:windows' : 'start';
+      
+      const clientProcess = spawn('npm', ['run', startCommand], {
         cwd: path.join(__dirname, '..', 'client'),
         stdio: 'pipe',
         shell: this.isWindows,
@@ -185,17 +277,31 @@ class ProdSyncLauncher {
         }
       });
 
+      clientProcess.on('error', (error) => {
+        this.log(`[CLIENT] 启动错误: ${error.message}`, 'error');
+        reject(error);
+      });
+
       // 等待客户端启动
-      setTimeout(() => {
-        this.checkPort(this.clientPort).then(isRunning => {
-          if (isRunning) {
-            this.log('前端应用启动成功', 'success');
-            resolve();
-          } else {
-            reject(new Error('前端应用启动失败'));
-          }
-        });
-      }, 10000);
+      let checkCount = 0;
+      const maxChecks = 30; // 最多检查30次，共3分钟
+      
+      const checkInterval = setInterval(async () => {
+        checkCount++;
+        const isRunning = await this.checkPort(this.clientPort);
+        
+        if (isRunning) {
+          clearInterval(checkInterval);
+          this.log('前端应用启动成功', 'success');
+          resolve();
+        } else if (checkCount >= maxChecks) {
+          clearInterval(checkInterval);
+          this.log('前端应用启动超时', 'error');
+          reject(new Error('前端应用启动超时'));
+        } else {
+          this.log(`[CLIENT] 等待启动中... (${checkCount}/${maxChecks})`, 'info');
+        }
+      }, 6000); // 每6秒检查一次
     });
   }
 
@@ -258,31 +364,51 @@ class ProdSyncLauncher {
   async start() {
     try {
       this.log('ProdSync 启动中...', 'info');
+      this.log(`运行平台: ${this.platform}`, 'info');
+      this.log(`Node.js版本: ${process.version}`, 'info');
       this.setupSignalHandlers();
       
       // 检查依赖
+      this.log('检查项目依赖...', 'info');
       const depsOk = await this.checkDependencies();
       if (!depsOk) {
+        this.log('依赖检查失败', 'error');
         return;
       }
 
       // 清理端口
+      this.log('清理可能的端口占用...', 'info');
       await this.cleanup();
 
       // 启动服务器
+      this.log('准备启动后端服务...', 'info');
       await this.startServer();
 
       // 启动客户端
+      this.log('准备启动前端服务...', 'info');
       await this.startClient();
 
       // 显示启动信息
       this.showInfo();
 
       // 保持进程运行
+      this.log('服务启动完成，按Ctrl+C停止服务', 'success');
       await new Promise(() => {});
       
     } catch (error) {
       this.log(`启动失败: ${error.message}`, 'error');
+      this.log('错误详情:', 'error');
+      console.error(error);
+      
+      // 清理已启动的进程
+      this.log('清理已启动的进程...', 'warning');
+      this.processes.forEach(process => {
+        if (process && !process.killed) {
+          process.kill();
+        }
+      });
+      
+      this.log('启动失败，请检查错误信息', 'error');
       process.exit(1);
     }
   }

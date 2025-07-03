@@ -123,10 +123,26 @@ build_project() {
     
     create_swap
     
+    log_info "配置生产环境API..."
+    configure_production_api
+    
     log_info "构建前端项目..."
     npm run build
     
     log_success "项目构建完成"
+}
+
+# 配置生产环境API
+configure_production_api() {
+    log_info "配置API为相对路径..."
+    
+    # 备份原配置文件
+    cp src/services/api.ts src/services/api.ts.backup
+    
+    # 修改API配置为相对路径，避免CORS问题
+    sed -i "s|process.env.REACT_APP_API_URL || 'http://localhost:5001/api'|'/api'|g" src/services/api.ts
+    
+    log_success "API配置完成 - 使用相对路径"
 }
 
 # 初始化数据库
@@ -154,20 +170,21 @@ configure_firewall() {
 
 # 启动服务
 start_services() {
-    log_info "启动服务..."
+    log_info "启动ProdSync服务..."
     
+    # 清理可能存在的旧服务
     pm2 delete prodsync-server prodsync-frontend 2>/dev/null || true
     
     cd /opt/prodsync/server
-    pm2 start npm --name "prodsync-server" -- start
     
-    cd /opt/prodsync/client  
-    HOST=0.0.0.0 PORT=5000 pm2 start npm --name "prodsync-frontend" -- start
+    # 以生产模式启动单一服务（前后端集成）
+    NODE_ENV=production pm2 start npm --name "prodsync" -- start
     
+    # 保存PM2配置并设置开机自启
     pm2 save
     pm2 startup --no-daemon 2>/dev/null || true
     
-    log_success "服务启动完成"
+    log_success "ProdSync服务启动完成"
 }
 
 # 验证部署
@@ -176,37 +193,50 @@ verify_deployment() {
     sleep 5
     
     pm2 status
-    netstat -tlnp | grep -E "(5000|5001)"
+    netstat -tlnp | grep 5001
     
     if curl -f http://localhost:5001/health >/dev/null 2>&1; then
-        log_success "后端服务正常"
+        log_success "API服务正常"
     fi
     
-    if curl -f http://localhost:5000 >/dev/null 2>&1; then
-        log_success "前端服务正常"
+    if curl -f http://localhost:5001/ >/dev/null 2>&1; then
+        log_success "前端界面正常"
     fi
+    
+    log_success "ProdSync部署验证完成"
 }
 
 # 显示结果
 show_result() {
-    server_ip=$(curl -s http://checkip.amazonaws.com/ 2>/dev/null || echo "YOUR_SERVER_IP")
+    server_ip=$(curl -s http://checkip.amazonaws.com/ 2>/dev/null || curl -s http://ipinfo.io/ip 2>/dev/null || echo "YOUR_SERVER_IP")
     
     echo ""
     echo "========================================"
     echo -e "${GREEN}🎉 ProdSync 部署完成！${NC}"
     echo "========================================"
     echo ""
-    echo "访问地址: http://$server_ip:5000"
-    echo "后端API:  http://$server_ip:5001"
+    echo -e "${BLUE}访问地址：${NC}"
+    echo "ProdSync系统: http://$server_ip:5001"
+    echo "API接口:     http://$server_ip:5001/api"
     echo ""
-    echo "默认账号: admin / admin123"
+    echo -e "${BLUE}默认管理员账号：${NC}"
+    echo "用户名: admin"
+    echo "密码:   admin123"
     echo ""
-    echo "管理命令:"
-    echo "  pm2 status    # 查看状态"
-    echo "  pm2 logs      # 查看日志"
-    echo "  pm2 restart all # 重启服务"
+    echo -e "${BLUE}服务管理命令：${NC}"
+    echo "查看状态: pm2 status"
+    echo "查看日志: pm2 logs prodsync"
+    echo "重启服务: pm2 restart prodsync"
+    echo "停止服务: pm2 stop prodsync"
     echo ""
-    echo -e "${RED}重要：请确保云服务器安全组开放5000和5001端口！${NC}"
+    echo -e "${GREEN}✅ 单服务器架构 - 无CORS问题${NC}"
+    echo ""
+    echo -e "${YELLOW}重要提醒：${NC}"
+    echo "1. 请确保云服务器安全组开放5001端口"
+    echo "2. 首次登录后请修改管理员密码"
+    echo "3. 系统使用单一端口，前后端已集成"
+    echo "4. 数据库文件位置: /opt/prodsync/server/data/"
+    echo ""
     echo "========================================"
 }
 

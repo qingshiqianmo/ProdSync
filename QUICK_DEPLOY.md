@@ -2,137 +2,115 @@
 
 ## 🚀 一键部署（推荐）
 
-### 在服务器上运行以下命令：
+适用于Linux服务器（Ubuntu/CentOS/Debian）的快速部署方案。
+
+### 前置条件
+
+- ✅ Linux服务器（Ubuntu 18.04+）
+- ✅ Root或sudo权限
+- ✅ 至少2GB内存（推荐4GB）
+- ✅ 互联网连接
+
+### 一键命令
 
 ```bash
-# 1. 下载一键部署脚本
+# 下载部署脚本
 curl -O https://raw.githubusercontent.com/your-repo/ProdSync/main/server-auto-deploy.sh
 
-# 2. 添加执行权限
-chmod +x server-auto-deploy.sh
-
-# 3. 运行部署脚本
-./server-auto-deploy.sh
+# 添加执行权限并运行
+chmod +x server-auto-deploy.sh && ./server-auto-deploy.sh
 ```
 
-## 📦 打包前清理（在开发环境）
+### 部署完成后
 
-### 在推送代码到GitHub前，运行清理脚本：
+🎉 **访问系统：** http://您的服务器IP:5001
 
-```bash
-# 在项目根目录运行
-chmod +x deploy/create-clean-package.sh
-./deploy/create-clean-package.sh
-```
+👤 **默认账号：**
+- 用户名：`admin`
+- 密码：`admin123`
 
-**清理内容：**
-- ✅ 删除所有 `node_modules` 目录
-- ✅ 删除构建文件 (`build/`, `dist/`)
-- ✅ 删除临时文件和日志
-- ✅ 删除环境配置文件
-- ⚠️ 可选：删除数据库文件
-- ⚠️ 可选：删除Git历史
+---
 
-## 🔥 重要提醒
+## 🔥 重要配置
 
-### ⚠️ 防火墙配置（必须！）
+### 1. 开放端口
 
-**云服务器安全组必须开放以下端口：**
+**⚠️ 必须配置云服务器安全组开放端口：**
 
-| 端口 | 协议 | 用途 |
-|------|------|------|
-| 5000 | TCP | 前端服务 |
-| 5001 | TCP | 后端API |
-| 22   | TCP | SSH访问 |
+| 端口 | 协议 | 授权对象 | 用途 |
+|------|------|----------|------|
+| 5001 | TCP | 0.0.0.0/0 | ProdSync系统 |
+| 22 | TCP | 0.0.0.0/0 | SSH访问 |
 
-**配置方法：**
-1. 登录云服务器控制台（阿里云/腾讯云/AWS等）
-2. 找到您的ECS实例
-3. 点击"安全组"或"Security Groups"
-4. 添加入站规则，授权对象设为 `0.0.0.0/0`
+**配置位置：**
+- 阿里云：控制台 → ECS → 安全组
+- 腾讯云：控制台 → CVM → 安全组
+- AWS：控制台 → EC2 → Security Groups
 
-### 📋 部署前检查清单
+### 2. 首次登录
 
-**服务器要求：**
-- [ ] Ubuntu 18.04+ / CentOS 7+ / Debian 9+
-- [ ] 内存至少 2GB
-- [ ] 磁盘空间至少 5GB
-- [ ] 能访问互联网（下载依赖）
+1. 浏览器访问：`http://您的服务器IP:5001`
+2. 使用默认账号登录：`admin` / `admin123`
+3. **立即修改密码！**
 
-**准备工作：**
-- [ ] Git仓库地址
-- [ ] 服务器SSH访问权限
-- [ ] 云服务器安全组已配置
+---
 
-## 🛠️ 手动部署步骤
+## 📋 手动快速部署
 
-如果一键脚本失败，可以按照以下步骤手动部署：
+如果一键脚本失败，可以手动执行：
 
-### 1. 环境准备
+### 步骤1：安装基础环境
+
 ```bash
 # 安装Node.js 18
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
+sudo apt-get install -y nodejs git
 
 # 安装PM2
 sudo npm install -g pm2
 ```
 
-### 2. 获取代码
+### 步骤2：获取代码
+
 ```bash
+# 创建部署目录
 sudo mkdir -p /opt/prodsync
 sudo chown $USER:$USER /opt/prodsync
 cd /opt/prodsync
-git clone YOUR_REPO_URL .
+
+# 克隆项目
+git clone https://github.com/your-repo/ProdSync.git .
 ```
 
-### 3. 安装依赖
-```bash
-# 服务器端
-cd /opt/prodsync/server
-npm install --production
+### 步骤3：配置和构建
 
-# 客户端
-cd /opt/prodsync/client
-npm install
-```
-
-### 4. 构建前端
 ```bash
-cd /opt/prodsync/client
+# 安装依赖
+cd server && npm install --production
+cd ../client && npm install
+
+# 配置API为相对路径（避免CORS）
+sed -i "s|process.env.REACT_APP_API_URL || 'http://localhost:5001/api'|'/api'|g" src/services/api.ts
+
+# 构建前端
 npm run build
 ```
 
-### 5. 初始化数据库
+### 步骤4：启动服务
+
 ```bash
-cd /opt/prodsync/server
+# 初始化数据库
+cd ../server
 node check-db.js
-```
 
-### 6. 启动服务
-```bash
-# 启动后端
-cd /opt/prodsync/server
-pm2 start npm --name "prodsync-server" -- start
-
-# 启动前端
-cd /opt/prodsync/client
-HOST=0.0.0.0 PORT=5000 pm2 start npm --name "prodsync-frontend" -- start
+# 启动服务（生产模式）
+NODE_ENV=production pm2 start npm --name "prodsync" -- start
 
 # 保存配置
-pm2 save
-pm2 startup
+pm2 save && pm2 startup
 ```
 
-## 🌐 访问应用
-
-部署完成后访问：
-- **前端界面**：`http://您的服务器IP:5000`
-- **后端API**：`http://您的服务器IP:5001`
-
-**默认管理员账号：**
-- 用户名：`admin`
-- 密码：`admin123`
+---
 
 ## 🔧 常用管理命令
 
@@ -141,62 +119,112 @@ pm2 startup
 pm2 status
 
 # 查看日志
-pm2 logs
-pm2 logs prodsync-server
-pm2 logs prodsync-frontend
+pm2 logs prodsync
 
 # 重启服务
-pm2 restart all
-pm2 restart prodsync-server
-pm2 restart prodsync-frontend
+pm2 restart prodsync
 
 # 停止服务
-pm2 stop all
-
-# 删除服务
-pm2 delete all
+pm2 stop prodsync
 ```
 
-## 🐛 故障排除
+---
 
-### 前端无法访问
-1. 检查服务状态：`pm2 status`
-2. 检查端口监听：`netstat -tlnp | grep 5000`
-3. 检查防火墙：确保安全组开放5000端口
-4. 查看日志：`pm2 logs prodsync-frontend`
+## 📦 离线部署
 
-### 后端API无法访问
-1. 检查服务状态：`pm2 status`
-2. 测试健康检查：`curl http://localhost:5001/health`
-3. 检查数据库：`cd /opt/prodsync/server && node check-db.js`
-4. 查看日志：`pm2 logs prodsync-server`
+如果服务器无法访问GitHub，可以使用离线包：
 
-### 内存不足
+### 1. 本地打包
+
 ```bash
-# 创建交换空间
+# 在有网络的机器上执行
+git clone https://github.com/your-repo/ProdSync.git
+cd ProdSync
+
+# 清理并打包
+find . -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
+tar -czf prodsync-deploy.tar.gz --exclude='.git' .
+```
+
+### 2. 上传部署
+
+```bash
+# 上传到服务器
+scp prodsync-deploy.tar.gz user@server:/tmp/
+
+# 在服务器上解压
+sudo mkdir -p /opt/prodsync
+sudo tar -xzf /tmp/prodsync-deploy.tar.gz -C /opt/prodsync
+sudo chown -R $USER:$USER /opt/prodsync
+
+# 按手动部署步骤继续...
+```
+
+---
+
+## 🐛 常见问题
+
+### Q: 无法访问系统？
+**A:** 检查以下项：
+1. 安全组是否开放5001端口
+2. 服务是否正常运行：`pm2 status`
+3. 端口是否监听：`netstat -tlnp | grep 5001`
+
+### Q: 登录提示错误？
+**A:** 检查API连接：
+```bash
+curl http://localhost:5001/api/login -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+```
+
+### Q: 内存不足构建失败？
+**A:** 创建交换空间：
+```bash
 sudo fallocate -l 1G /swapfile
 sudo chmod 600 /swapfile
 sudo mkswap /swapfile
 sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
-### node_modules问题
+### Q: 需要更新代码？
+**A:** 重新部署：
 ```bash
-# 清理并重新安装
 cd /opt/prodsync
-find . -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
-cd server && npm install --production
-cd ../client && npm install
-npm run build
+git pull origin main
+cd client && npm run build
+pm2 restart prodsync
 ```
 
-## 📞 获取帮助
+---
 
-如果遇到问题：
-1. 检查本文档的故障排除部分
-2. 查看服务日志：`pm2 logs`
-3. 检查系统资源：`free -h` 和 `df -h`
-4. 确认防火墙配置
+## 🎯 架构优势
 
-**记住：80%的部署问题都是防火墙/安全组配置导致的！** 
+**单服务器模式的优势：**
+- ✅ **无CORS问题** - 前后端同域
+- ✅ **简化运维** - 一个服务管理
+- ✅ **节省资源** - 减少端口和进程
+- ✅ **提高安全** - 最小化网络暴露
+
+**系统架构：**
+```
+用户 → http://IP:5001 → Express服务器
+                           ├── 静态文件（前端）
+                           └── API服务（/api/*）
+```
+
+---
+
+## 📞 技术支持
+
+**部署成功标志：**
+- ✅ `pm2 status` 显示prodsync服务为online
+- ✅ `curl http://localhost:5001` 返回HTML页面
+- ✅ 浏览器能访问并登录系统
+
+**获取帮助：**
+1. 查看详细日志：`pm2 logs prodsync`
+2. 检查系统资源：`free -h && df -h`
+3. 验证端口开放：`netstat -tlnp | grep 5001`
+
+**记住：现在只需要一个端口5001！** 🎉 

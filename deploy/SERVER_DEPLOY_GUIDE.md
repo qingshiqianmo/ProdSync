@@ -1,12 +1,18 @@
 # ProdSync 服务器端部署指南
 
-## 🚀 一键部署脚本
+## 🚀 一键部署（推荐）
 
-### 快速部署命令
+### 在服务器上运行以下命令：
 
 ```bash
-# 下载并运行一键部署脚本
-curl -fsSL https://raw.githubusercontent.com/your-repo/ProdSync/main/deploy/server-auto-deploy.sh | bash
+# 1. 下载一键部署脚本
+curl -O https://raw.githubusercontent.com/your-repo/ProdSync/main/server-auto-deploy.sh
+
+# 2. 添加执行权限
+chmod +x server-auto-deploy.sh
+
+# 3. 运行部署脚本
+./server-auto-deploy.sh
 ```
 
 ---
@@ -68,7 +74,23 @@ cd /opt/prodsync/client
 npm install
 ```
 
-### 步骤4：构建前端
+### 步骤4：配置生产环境API
+
+```bash
+cd /opt/prodsync/client
+
+# ⚠️ 重要：备份原配置文件
+cp src/services/api.ts src/services/api.ts.backup
+
+# ⚠️ 关键步骤：配置API为相对路径（避免CORS问题）
+sed -i "s|process.env.REACT_APP_API_URL || 'http://localhost:5001/api'|'/api'|g" src/services/api.ts
+
+# 验证修改结果
+echo "API地址已配置为相对路径:"
+grep "API_BASE_URL" src/services/api.ts
+```
+
+### 步骤5：构建前端
 
 ```bash
 cd /opt/prodsync/client
@@ -86,25 +108,21 @@ fi
 npm run build
 ```
 
-### 步骤5：初始化数据库
+### 步骤6：初始化数据库
 
 ```bash
 cd /opt/prodsync/server
 node check-db.js
 ```
 
-### 步骤6：启动服务
+### 步骤7：启动服务
 
 ```bash
-# 启动后端服务
+# 以生产模式启动ProdSync（前后端集成）
 cd /opt/prodsync/server
-pm2 start npm --name "prodsync-server" -- start
+NODE_ENV=production pm2 start npm --name "prodsync" -- start
 
-# 启动前端服务
-cd /opt/prodsync/client
-HOST=0.0.0.0 PORT=5000 pm2 start npm --name "prodsync-frontend" -- start
-
-# 保存PM2配置
+# 保存PM2配置并设置开机自启
 pm2 save
 pm2 startup
 ```
@@ -113,20 +131,20 @@ pm2 startup
 
 ## 🔥 防火墙配置（重要！）
 
-### 阿里云/腾讯云安全组配置
+### 云服务器安全组配置
 
-**必须在云服务器控制台配置安全组规则：**
+**只需要开放一个端口：**
 
-1. **登录云服务器控制台**
-2. **找到您的ECS实例**
-3. **点击"安全组"**
-4. **添加入站规则：**
+| 端口 | 协议 | 授权对象 | 描述 |
+|------|------|----------|------|
+| 5001 | TCP | 0.0.0.0/0 | ProdSync系统 |
+| 22 | TCP | 0.0.0.0/0 | SSH访问 |
 
-| 端口范围 | 协议类型 | 授权对象 | 描述 |
-|---------|---------|----------|------|
-| 5000/5000 | TCP | 0.0.0.0/0 | ProdSync前端 |
-| 5001/5001 | TCP | 0.0.0.0/0 | ProdSync后端API |
-| 22/22 | TCP | 0.0.0.0/0 | SSH访问 |
+**配置方法：**
+1. 登录云服务器控制台（阿里云/腾讯云/AWS等）
+2. 找到您的ECS实例
+3. 点击"安全组"或"Security Groups"
+4. 添加入站规则，授权对象设为 `0.0.0.0/0`
 
 ### 服务器本地防火墙
 
@@ -135,7 +153,6 @@ pm2 startup
 sudo ufw status
 
 # 如果启用了防火墙，需要开放端口
-sudo ufw allow 5000
 sudo ufw allow 5001
 sudo ufw allow ssh
 
@@ -158,9 +175,6 @@ find . -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
 rm -rf node_modules/
 rm -rf client/node_modules/
 rm -rf server/node_modules/
-rm -rf prodsync-deploy/node_modules/
-rm -rf prodsync-deploy/client/node_modules/
-rm -rf prodsync-deploy/server/node_modules/
 ```
 
 **2. 环境文件**
@@ -177,8 +191,8 @@ rm -f client/.env
 
 部署成功后，可以通过以下方式访问：
 
-- **前端界面**：http://您的服务器IP:5000
-- **后端API**：http://您的服务器IP:5001
+- **ProdSync系统**：http://您的服务器IP:5001
+- **API接口**：http://您的服务器IP:5001/api
 
 **默认管理员账号：**
 - 用户名：`admin`
@@ -186,18 +200,113 @@ rm -f client/.env
 
 ---
 
-## 🔧 故障排除
+## 🔧 服务管理
 
-### 前端无法访问
+### 常用管理命令
+
+```bash
+# 查看服务状态
+pm2 status
+
+# 查看日志
+pm2 logs prodsync
+
+# 重启服务
+pm2 restart prodsync
+
+# 停止服务
+pm2 stop prodsync
+
+# 删除服务
+pm2 delete prodsync
+```
+
+### 查看系统信息
+
+```bash
+# 查看端口监听
+netstat -tlnp | grep 5001
+
+# 查看系统资源
+free -h
+df -h
+
+# 查看服务详情
+pm2 show prodsync
+```
+
+---
+
+## 🐛 故障排除
+
+### 无法访问系统
 
 1. **检查服务状态**：`pm2 status`
-2. **检查端口监听**：`netstat -tlnp | grep 5000`
-3. **检查防火墙**：确保安全组和本地防火墙开放5000端口
-4. **查看日志**：`pm2 logs prodsync-frontend`
+2. **检查端口监听**：`netstat -tlnp | grep 5001`
+3. **检查防火墙**：确保安全组开放5001端口
+4. **查看日志**：`pm2 logs prodsync`
 
-### 后端API无法访问
+### 登录失败
 
-1. **检查服务状态**：`pm2 status`
-2. **检查数据库**：`cd /opt/prodsync/server && node check-db.js`
-3. **测试健康检查**：`curl http://localhost:5001/health`
-4. **查看日志**：`pm2 logs prodsync-server` 
+1. **检查数据库**：`cd /opt/prodsync/server && node check-db.js`
+2. **测试API**：`curl http://localhost:5001/api/login -X POST -H "Content-Type: application/json" -d '{"username":"admin","password":"admin123"}'`
+3. **查看浏览器开发者工具**：F12 → Network标签
+
+### 内存不足
+
+```bash
+# 创建交换空间
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+### 重新构建
+
+```bash
+# 如果需要更新代码
+cd /opt/prodsync
+git pull origin main
+
+# 重新构建前端
+cd client
+npm run build
+
+# 重启服务
+pm2 restart prodsync
+```
+
+---
+
+## 🎯 架构说明
+
+**单服务器架构优势：**
+- ✅ **无CORS问题** - 前后端在同一域名下
+- ✅ **简化部署** - 只需管理一个服务
+- ✅ **节省资源** - 减少端口和进程数量
+- ✅ **提高安全性** - 减少暴露的网络端口
+
+**工作原理：**
+```
+用户浏览器
+    ↓
+http://服务器IP:5001
+    ↓
+Express服务器
+├── 静态文件服务 (React前端)
+└── API服务 (/api/*)
+```
+
+---
+
+## 📞 获取帮助
+
+如果遇到问题：
+1. 检查本文档的故障排除部分
+2. 查看服务日志：`pm2 logs prodsync`
+3. 检查系统资源：`free -h` 和 `df -h`
+4. 确认防火墙配置
+
+**记住：现在只需要开放5001端口！** 

@@ -1,148 +1,186 @@
-# 🚀 ProdSync 服务器部署总结
+# ProdSync 部署文档
 
-## 🎯 部署目标
-将ProdSync生产项目管理系统部署到Linux服务器：**110.42.101.114**
+## 🚀 快速部署
 
-## 📦 部署文件说明
+### 一键部署（推荐）
 
-### 核心部署文件
-- `deploy/deploy.sh` - 一键部署脚本（首次部署）
-- `deploy/update.sh` - 更新部署脚本（后续更新）
-- `deploy/monitor.sh` - 服务监控脚本
-- `deploy/README.md` - 详细部署指南
-- `deploy/quick-deploy.md` - 快速部署指令
-
-### 配置文件
-- `.gitignore` - 已更新，忽略生产环境敏感文件
-- `README.md` - 已添加Linux部署章节
-
-## 🚀 一键部署步骤
-
-### 1. 连接服务器
 ```bash
-ssh username@110.42.101.114
+# 下载部署脚本
+curl -O https://raw.githubusercontent.com/your-repo/ProdSync/main/server-auto-deploy.sh
+
+# 运行部署
+chmod +x server-auto-deploy.sh && ./server-auto-deploy.sh
 ```
 
-### 2. 安装Node.js（如需要）
-```bash
-# Ubuntu/Debian
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo apt-get install -y nodejs
+### 部署完成
 
-# CentOS/RHEL  
-curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash - && sudo yum install -y nodejs
-```
-
-### 3. 克隆并部署
-```bash
-git clone https://github.com/qingshiqianmo/ProdSync.git
-cd ProdSync
-chmod +x deploy/deploy.sh
-./deploy/deploy.sh
-```
-
-## 📊 部署后管理
-
-### 服务管理
-```bash
-# 查看服务状态
-pm2 status
-
-# 查看日志
-pm2 logs prodsync-server
-
-# 重启服务  
-pm2 restart prodsync-server
-
-# 停止服务
-pm2 stop prodsync-server
-```
-
-### 系统监控
-```bash
-# 系统监控
-chmod +x deploy/monitor.sh && ./deploy/monitor.sh
-
-# 连续监控
-./deploy/monitor.sh --continuous
-```
-
-### 系统更新
-```bash
-# 更新到最新版本
-chmod +x deploy/update.sh && ./deploy/update.sh
-
-# 重置管理员密码
-npm run reset-admin
-```
-
-## 🌐 访问信息
-
-- **前端地址**: http://110.42.101.114
-- **API地址**: http://110.42.101.114/api  
-- **健康检查**: http://110.42.101.114/health
-
-### 默认账户
-- **用户名**: admin
-- **密码**: admin123
-
-⚠️ **重要**: 首次登录后请立即修改管理员密码！
-
-## 🔧 部署架构
-
-```
-Internet
-    ↓
-Nginx (Port 80)
-    ↓
-ProdSync API (Port 5001)
-    ↓
-SQLite Database
-```
-
-### 技术栈
-- **前端**: React + Ant Design (静态文件)
-- **后端**: Node.js + Express + SQLite
-- **进程管理**: PM2
-- **Web服务器**: Nginx（可选）
-- **操作系统**: Linux (Ubuntu/CentOS)
-
-## 📝 注意事项
-
-### 安全建议
-1. 修改默认管理员密码
-2. 配置防火墙规则
-3. 启用HTTPS（生产环境）
-4. 定期备份数据库
-5. 监控系统资源
-
-### 维护建议
-1. 定期更新系统依赖
-2. 查看应用日志
-3. 监控服务状态
-4. 备份重要数据
-5. 关注系统性能
-
-## 🆘 故障排除
-
-### 常见问题
-1. **端口被占用**: 使用 `sudo fuser -k 5001/tcp` 释放端口
-2. **权限不足**: 检查文件权限，使用 `chmod +x` 给脚本执行权限
-3. **服务启动失败**: 查看 `pm2 logs prodsync-server` 日志
-4. **内存不足**: 检查系统资源，必要时创建swap空间
-
-### 日志位置
-- **应用日志**: `./logs/`
-- **PM2日志**: `~/.pm2/logs/`
-- **Nginx日志**: `/var/log/nginx/`
-
-## 📞 技术支持
-
-如遇到部署问题，请：
-1. 查看相关日志文件
-2. 运行监控脚本检查状态
-3. 参考 `deploy/README.md` 详细文档
-4. 联系开发团队获取支持
+- 🌐 **访问地址**：http://您的服务器IP:5001
+- 👤 **默认账号**：admin / admin123
+- 🔑 **重要**：首次登录后请立即修改密码
 
 ---
 
-**部署完成后，您就可以通过 http://110.42.101.114 访问ProdSync系统了！** 🎉 
+## 🎯 架构说明
+
+### 单服务器架构
+```
+用户浏览器 → http://服务器IP:5001 → Express服务器
+                                       ├── 前端静态文件
+                                       └── API服务 (/api/*)
+```
+
+### 优势
+- ✅ **无CORS问题** - 前后端同域
+- ✅ **简化运维** - 一个服务管理
+- ✅ **节省资源** - 减少端口和进程
+- ✅ **提高安全** - 最小化网络暴露
+
+---
+
+## 📋 部署要求
+
+### 服务器要求
+- **操作系统**：Ubuntu 18.04+ / CentOS 7+ / Debian 9+
+- **内存**：至少2GB（推荐4GB）
+- **磁盘**：至少5GB可用空间
+- **权限**：Root或sudo权限
+
+### 网络要求
+- **端口开放**：5001（ProdSync系统）、22（SSH）
+- **网络连接**：能访问互联网下载依赖
+
+---
+
+## 🔧 手动部署
+
+如果一键脚本失败，可以手动部署：
+
+### 1. 安装环境
+```bash
+# 安装Node.js 18
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs git
+
+# 安装PM2
+sudo npm install -g pm2
+```
+
+### 2. 获取代码
+```bash
+sudo mkdir -p /opt/prodsync
+sudo chown $USER:$USER /opt/prodsync
+cd /opt/prodsync
+git clone https://github.com/your-repo/ProdSync.git .
+```
+
+### 3. 安装依赖
+```bash
+cd server && npm install --production
+cd ../client && npm install
+```
+
+### 4. 配置API
+```bash
+# 配置API为相对路径（避免CORS）
+cd client
+sed -i "s|process.env.REACT_APP_API_URL || 'http://localhost:5001/api'|'/api'|g" src/services/api.ts
+```
+
+### 5. 构建和启动
+```bash
+# 构建前端
+npm run build
+
+# 初始化数据库
+cd ../server
+node check-db.js
+
+# 启动服务
+NODE_ENV=production pm2 start npm --name "prodsync" -- start
+pm2 save && pm2 startup
+```
+
+---
+
+## 🔥 防火墙配置
+
+### 云服务器安全组
+**必须开放端口：**
+| 端口 | 协议 | 授权对象 | 描述 |
+|------|------|----------|------|
+| 5001 | TCP | 0.0.0.0/0 | ProdSync系统 |
+| 22 | TCP | 0.0.0.0/0 | SSH访问 |
+
+### 本地防火墙
+```bash
+sudo ufw allow 5001
+sudo ufw allow ssh
+sudo ufw enable
+```
+
+---
+
+## 🔧 管理命令
+
+```bash
+# 查看状态
+pm2 status
+
+# 查看日志
+pm2 logs prodsync
+
+# 重启服务
+pm2 restart prodsync
+
+# 停止服务
+pm2 stop prodsync
+
+# 监控资源
+pm2 monit
+```
+
+---
+
+## 🐛 故障排除
+
+### 无法访问系统
+1. 检查服务：`pm2 status`
+2. 检查端口：`netstat -tlnp | grep 5001`
+3. 检查防火墙：确保安全组开放5001端口
+
+### 登录失败
+1. 测试API：`curl http://localhost:5001/api/login -X POST -H "Content-Type: application/json" -d '{"username":"admin","password":"admin123"}'`
+2. 检查数据库：`cd /opt/prodsync/server && node check-db.js`
+
+### 内存不足
+```bash
+# 创建交换空间
+sudo fallocate -l 1G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+```
+
+---
+
+## 📚 相关文档
+
+- **详细指南**：[deploy/SERVER_DEPLOY_GUIDE.md](deploy/SERVER_DEPLOY_GUIDE.md)
+- **快速部署**：[QUICK_DEPLOY.md](QUICK_DEPLOY.md)
+- **快速开始**：[QUICK_START.md](QUICK_START.md)
+
+---
+
+## 📞 获取帮助
+
+**部署成功标志：**
+- ✅ `pm2 status` 显示prodsync为online
+- ✅ 浏览器能访问 http://服务器IP:5001
+- ✅ 默认账号能正常登录
+
+**需要帮助时：**
+1. 查看日志：`pm2 logs prodsync`
+2. 检查资源：`free -h && df -h`
+3. 验证端口：`netstat -tlnp | grep 5001`
+
+**记住：现在只需要开放一个端口5001！** 🎉 

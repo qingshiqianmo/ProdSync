@@ -90,10 +90,44 @@ cd "$DEPLOY_DIR"
 git clone "$REPO_URL" .
 log_success "最新代码克隆完成"
 
-# 步骤5：清理node_modules
-log_info "清理所有node_modules目录..."
+# 步骤5：彻底清理node_modules目录
+log_info "彻底清理所有node_modules目录..."
+
+# 显示清理前的node_modules目录
+log_info "检查现有node_modules目录:"
+find . -name "node_modules" -type d 2>/dev/null || echo "未发现node_modules目录"
+
+# 清理根目录下的node_modules
+if [[ -d "node_modules" ]]; then
+    log_warning "删除根目录node_modules..."
+    rm -rf node_modules
+fi
+
+# 清理client目录下的node_modules
+if [[ -d "client/node_modules" ]]; then
+    log_warning "删除client/node_modules..."
+    rm -rf client/node_modules
+fi
+
+# 清理server目录下的node_modules
+if [[ -d "server/node_modules" ]]; then
+    log_warning "删除server/node_modules..."
+    rm -rf server/node_modules
+fi
+
+# 使用find命令清理所有可能遗漏的node_modules
+log_info "执行全面清理..."
 find . -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
-log_success "node_modules清理完成"
+
+# 验证清理结果
+log_info "验证清理结果:"
+remaining_modules=$(find . -name "node_modules" -type d 2>/dev/null | wc -l)
+if [[ $remaining_modules -eq 0 ]]; then
+    log_success "所有node_modules目录已清理完成"
+else
+    log_warning "仍有 $remaining_modules 个node_modules目录未清理"
+    find . -name "node_modules" -type d 2>/dev/null
+fi
 
 # 步骤6：安装服务器端依赖
 log_info "安装服务器端依赖..."

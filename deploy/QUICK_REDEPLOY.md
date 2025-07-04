@@ -77,8 +77,21 @@ sudo chown $USER:$USER /opt/prodsync
 cd /opt/prodsync
 git clone https://github.com/qingshiqianmo/ProdSync.git .
 
-# 清理node_modules
+# 彻底清理node_modules（重要！）
+# 先检查现有的node_modules目录
+find . -name "node_modules" -type d 2>/dev/null || echo "未发现node_modules目录"
+
+# 分别删除各个目录下的node_modules
+rm -rf node_modules
+rm -rf client/node_modules  
+rm -rf server/node_modules
+
+# 使用find命令清理所有可能遗漏的node_modules
 find . -name "node_modules" -type d -exec rm -rf {} + 2>/dev/null || true
+
+# 验证清理结果
+echo "验证清理结果:"
+find . -name "node_modules" -type d 2>/dev/null || echo "✅ 所有node_modules已清理完成"
 
 # 安装依赖
 cd /opt/prodsync/server

@@ -75,6 +75,26 @@ app.get('/health', (req, res) => {
   });
 });
 
+// 获取本地日期的辅助函数
+const getLocalDate = () => {
+  const now = new Date();
+  return now.getFullYear() + '-' + 
+         String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+         String(now.getDate()).padStart(2, '0');
+};
+
+// 获取本地日期时间的辅助函数
+const getLocalDateTime = () => {
+  const now = new Date();
+  // 直接使用本地时间格式化，不进行时区转换
+  return now.getFullYear() + '-' + 
+         String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+         String(now.getDate()).padStart(2, '0') + ' ' +
+         String(now.getHours()).padStart(2, '0') + ':' +
+         String(now.getMinutes()).padStart(2, '0') + ':' +
+         String(now.getSeconds()).padStart(2, '0');
+};
+
 // 用户登录
 app.post('/api/login', async (req, res) => {
   try {
@@ -205,47 +225,52 @@ app.post('/api/users', authenticateToken, async (req, res) => {
 app.get('/api/tasks', authenticateToken, async (req, res) => {
   try {
     const currentUser = await dbGet('SELECT * FROM users_v3 WHERE id = ?', [req.user.userId]);
-    
-    let whereClause = '';
-    let params = [];
-    
-    // 根据用户身份过滤任务
-    if (currentUser.identity === IDENTITIES.ADMIN || currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER) {
-      // 管理员和生产调度员可以看到所有任务
-      whereClause = '';
-    } else {
-      // 其他身份只能看到相关的任务（创建的、负责的、执行的、转发给自己的）
-      whereClause = `WHERE (t.created_by = ? OR t.production_leader = ? OR t.executor = ? OR t.forwarded_to = ?)`;
-      params = [currentUser.id, currentUser.id, currentUser.id, currentUser.id];
-    }
-    
-    const query = `
+    let query = `
       SELECT 
         t.*,
         u1.name as created_by_name,
         u2.name as production_leader_name,
         u3.name as executor_name,
-        u4.name as forwarded_to_name,
-        (SELECT COUNT(*) FROM milestones WHERE task_id = t.id) as milestone_count,
-        (SELECT COUNT(*) FROM milestones WHERE task_id = t.id AND status = 'completed') as completed_milestone_count
+        COALESCE(m.milestone_count, 0) as milestone_count,
+        COALESCE(m.completed_milestone_count, 0) as completed_milestone_count
       FROM tasks_v3 t
       LEFT JOIN users_v3 u1 ON t.created_by = u1.id
       LEFT JOIN users_v3 u2 ON t.production_leader = u2.id
       LEFT JOIN users_v3 u3 ON t.executor = u3.id
-      LEFT JOIN users_v3 u4 ON t.forwarded_to = u4.id
-      ${whereClause}
-      ORDER BY t.created_at DESC
+      LEFT JOIN (
+        SELECT 
+          task_id,
+          COUNT(*) as milestone_count,
+          SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_milestone_count
+        FROM milestones 
+        GROUP BY task_id
+      ) m ON t.id = m.task_id
     `;
+    const params = [];
+
+    // 根据用户身份过滤任务
+    if (currentUser.identity === IDENTITIES.STAFF) {
+      // 职员只能看到分配给自己的任务
+      query += ' WHERE t.executor = ?';
+      params.push(currentUser.id);
+    } else if (currentUser.identity === IDENTITIES.PRODUCTION_LEADER) {
+      // 生产所领导只能看到自己负责的任务
+      query += ' WHERE t.production_leader = ?';
+      params.push(currentUser.id);
+    }
+    // 管理员和生产调度员可以看到所有任务，不添加WHERE条件
     
+    query += ' ORDER BY t.created_at DESC';
+
     const tasks = await dbAll(query, params);
     res.json(tasks);
   } catch (error) {
-    console.error('获取任务列表错误:', error);
+    console.error('获取任务列表失败:', error);
     res.status(500).json({ message: '获取任务列表失败' });
   }
 });
 
-// 创建任务 - 支持两级分配和可选里程碑
+// 创建任务 - 支持新的工作流程
 app.post('/api/tasks', authenticateToken, async (req, res) => {
   try {
     const currentUser = await dbGet('SELECT * FROM users_v3 WHERE id = ?', [req.user.userId]);
@@ -254,35 +279,55 @@ app.post('/api/tasks', authenticateToken, async (req, res) => {
       return res.status(403).json({ message: '只有管理员和生产调度员可以创建任务' });
     }
 
-    const { name, description, type, production_leader, executor, planned_start_date, planned_end_date, milestones } = req.body;
+    const { name, description, type, production_leader, planned_start_date, planned_end_date, milestones } = req.body;
     
-    if (!name || !type || !executor || !planned_start_date || !planned_end_date) {
-      return res.status(400).json({ message: '任务名称、类型、执行人和计划时间不能为空' });
+    if (!name || !type || !planned_start_date || !planned_end_date) {
+      return res.status(400).json({ message: '任务名称、类型和计划时间不能为空' });
+    }
+
+    // 生产调度创建任务时必须指定生产所领导
+    if (currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER && !production_leader) {
+      return res.status(400).json({ message: '生产调度创建任务时必须指定生产所领导' });
     }
 
     if (!Object.values(TASK_TYPES).includes(type)) {
       return res.status(400).json({ message: '无效的任务类型' });
     }
 
-    // 创建任务
+    // 当前时间作为实际开始时间
+    const now = getLocalDate();
+    
     const result = await dbRun(`
-      INSERT INTO tasks_v3 (name, description, type, created_by, production_leader, executor, planned_start_date, planned_end_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [name, description, type, currentUser.id, production_leader, executor, planned_start_date, planned_end_date]);
+      INSERT INTO tasks_v3 (
+        name, description, type, created_by, production_leader, 
+        planned_start_date, planned_end_date, actual_start_date, status
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      name, description, type, currentUser.id, production_leader, 
+      planned_start_date, planned_end_date, now, TASK_STATUS.PENDING
+    ]);
 
     const taskId = result.lastInsertRowid;
 
     // 如果有里程碑，创建里程碑
     if (milestones && Array.isArray(milestones) && milestones.length > 0) {
+      console.log('创建里程碑:', milestones);
       for (let i = 0; i < milestones.length; i++) {
         const milestone = milestones[i];
+        console.log(`里程碑 ${i + 1}:`, milestone);
         if (milestone.name && milestone.planned_date) {
-          await dbRun(`
+          const result = await dbRun(`
             INSERT INTO milestones (task_id, name, description, planned_date, order_index)
             VALUES (?, ?, ?, ?, ?)
           `, [taskId, milestone.name, milestone.description || '', milestone.planned_date, i + 1]);
+          console.log(`里程碑 ${i + 1} 创建成功，ID:`, result.lastInsertRowid);
+        } else {
+          console.log(`里程碑 ${i + 1} 跳过：缺少名称或计划日期`);
         }
       }
+    } else {
+      console.log('没有里程碑数据或数据为空');
     }
 
     res.json({ message: '任务创建成功', taskId: taskId });
@@ -292,7 +337,7 @@ app.post('/api/tasks', authenticateToken, async (req, res) => {
   }
 });
 
-// 获取任务详情（包含里程碑）
+// 获取任务详情（包含里程碑和回执）
 app.get('/api/tasks/:id', authenticateToken, async (req, res) => {
   try {
     const taskId = req.params.id;
@@ -303,13 +348,11 @@ app.get('/api/tasks/:id', authenticateToken, async (req, res) => {
         t.*,
         u1.name as created_by_name,
         u2.name as production_leader_name,
-        u3.name as executor_name,
-        u4.name as forwarded_to_name
+        u3.name as executor_name
       FROM tasks_v3 t
       LEFT JOIN users_v3 u1 ON t.created_by = u1.id
       LEFT JOIN users_v3 u2 ON t.production_leader = u2.id
       LEFT JOIN users_v3 u3 ON t.executor = u3.id
-      LEFT JOIN users_v3 u4 ON t.forwarded_to = u4.id
       WHERE t.id = ?
     `, [taskId]);
     
@@ -324,7 +367,19 @@ app.get('/api/tasks/:id', authenticateToken, async (req, res) => {
       ORDER BY order_index
     `, [taskId]);
     
+    // 获取任务回执
+    const receipts = await dbAll(`
+      SELECT 
+        tr.*,
+        u.name as executor_name
+      FROM task_receipts tr
+      LEFT JOIN users_v3 u ON tr.executor_id = u.id
+      WHERE tr.task_id = ?
+      ORDER BY tr.submitted_at DESC
+    `, [taskId]);
+    
     task.milestones = milestones;
+    task.receipts = receipts;
     
     res.json(task);
   } catch (error) {
@@ -344,30 +399,46 @@ app.put('/api/tasks/:id/status', authenticateToken, async (req, res) => {
       return res.status(400).json({ message: '无效的任务状态' });
     }
 
-    // 权限检查：确保操作者是任务的执行人、生产所领导或管理员/调度员
-    const task = await dbGet('SELECT executor, production_leader, created_by FROM tasks_v3 WHERE id = ?', [taskId]);
+    // 获取任务和当前用户信息
+    const task = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
     if (!task) {
       return res.status(404).json({ message: '任务不存在' });
     }
     const currentUser = await dbGet('SELECT identity FROM users_v3 WHERE id = ?', [userId]);
 
-    // Permission Check:
-    if (currentUser.identity === IDENTITIES.ADMIN || currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER) {
-        // Admins and Schedulers can set any valid status.
-    } else if (task.executor === userId) {
-        // Executors can only set status to IN_PROGRESS or COMPLETED
-        if (status !== TASK_STATUS.IN_PROGRESS && status !== TASK_STATUS.COMPLETED) {
-            return res.status(403).json({ message: '执行人只能将任务标记为进行中或已完成' });
-        }
+    // 新的权限检查逻辑
+    if (status === TASK_STATUS.COMPLETED) {
+      // 完成任务的权限：只有任务执行人或生产所领导可以完成任务
+      if (currentUser.identity === IDENTITIES.ADMIN) {
+        // 管理员可以完成任务
+      } else if (task.executor === userId) {
+        // 执行人可以完成任务（需要填写回执）
+      } else if (task.production_leader === userId) {
+        // 生产所领导可以直接确认任务完成
+      } else {
+        return res.status(403).json({ message: '只有任务执行人或生产所领导可以完成任务' });
+      }
+      
+      // 生产调度不能完成任务
+      if (currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER) {
+        return res.status(403).json({ message: '生产调度不能完成任务，请由执行人或生产所领导完成' });
+      }
     } else {
-        // Others (like production_leader if not executor) cannot change status
+      // 其他状态的权限检查
+      if (currentUser.identity === IDENTITIES.ADMIN || 
+          task.executor === userId || 
+          task.production_leader === userId ||
+          task.created_by === userId) {
+        // 允许这些角色修改状态
+      } else {
         return res.status(403).json({ message: '权限不足，无法更新此任务状态' });
+      }
     }
 
-    let updateFields = 'status = ?, updated_at = CURRENT_TIMESTAMP';
+    let updateFields = 'status = ?, updated_at = ?';
     let params = [status];
 
-    const now = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const now = getLocalDateTime();
 
     if (status === TASK_STATUS.IN_PROGRESS) {
       // 如果提供了 actual_start_date，则使用它，否则检查是否已存在，不存在则设为当前日期
@@ -393,13 +464,15 @@ app.put('/api/tasks/:id/status', authenticateToken, async (req, res) => {
           params.push(actual_start_date || now); // if completed, start is also now or provided
       }
 
-      // 检查是否逾期完成
-      const completionDate = actual_end_date || now;
-      const isOverdue = new Date(completionDate) > new Date(existingTask.planned_end_date);
+      // 检查是否逾期完成 - 使用本地日期比较
+      const localDate = getLocalDate();
+      const isOverdue = new Date(localDate) > new Date(task.planned_end_date);
       updateFields += ', completed_overdue = ?';
       params.push(isOverdue ? 1 : 0);
     }
 
+    // 添加updated_at参数
+    params.push(now);
     params.push(taskId);
     
     await dbRun(`UPDATE tasks_v3 SET ${updateFields} WHERE id = ?`, params);
@@ -424,23 +497,54 @@ app.put('/api/tasks/:id', authenticateToken, async (req, res) => {
     }
 
     const taskId = req.params.id;
-    const { name, description, type, production_leader, executor, planned_start_date, planned_end_date } = req.body;
+    const { name, description, type, production_leader, planned_start_date, planned_end_date, milestones } = req.body;
     
-    if (!name || !type || !executor || !planned_start_date || !planned_end_date) {
-      return res.status(400).json({ message: '任务名称、类型、执行人和计划时间不能为空' });
+    console.log('更新任务请求数据:', {
+      taskId,
+      name,
+      description,
+      type,
+      production_leader,
+      planned_start_date,
+      planned_end_date,
+      milestones: milestones ? milestones.length : 0
+    });
+    
+    if (!name || !type || !planned_start_date || !planned_end_date) {
+      console.log('验证失败 - 缺少必填字段:', { name, type, planned_start_date, planned_end_date });
+      return res.status(400).json({ message: '任务名称、类型和计划时间不能为空' });
     }
 
     if (!Object.values(TASK_TYPES).includes(type)) {
+      console.log('验证失败 - 无效的任务类型:', type, 'valid types:', Object.values(TASK_TYPES));
       return res.status(400).json({ message: '无效的任务类型' });
     }
 
-    // 更新任务
+    // 更新任务基本信息
+    const updateTime = getLocalDateTime();
     await dbRun(`
       UPDATE tasks_v3 
-      SET name = ?, description = ?, type = ?, production_leader = ?, executor = ?, 
-          planned_start_date = ?, planned_end_date = ?, updated_at = CURRENT_TIMESTAMP
+      SET name = ?, description = ?, type = ?, production_leader = ?, 
+          planned_start_date = ?, planned_end_date = ?, updated_at = ?
       WHERE id = ?
-    `, [name, description, type, production_leader, executor, planned_start_date, planned_end_date, taskId]);
+    `, [name, description, type, production_leader, planned_start_date, planned_end_date, updateTime, taskId]);
+
+    // 处理里程碑更新：先删除旧的，再添加新的
+    if (milestones && Array.isArray(milestones)) {
+      // 删除现有里程碑
+      await dbRun('DELETE FROM milestones WHERE task_id = ?', [taskId]);
+      
+      // 添加新里程碑
+      for (let i = 0; i < milestones.length; i++) {
+        const milestone = milestones[i];
+        if (milestone.name && milestone.planned_date) {
+          await dbRun(`
+            INSERT INTO milestones (task_id, name, description, planned_date, order_index)
+            VALUES (?, ?, ?, ?, ?)
+          `, [taskId, milestone.name, milestone.description || '', milestone.planned_date, i + 1]);
+        }
+      }
+    }
 
     res.json({ message: '任务更新成功' });
   } catch (error) {
@@ -509,8 +613,8 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
     // 检查用户是否有关联的任务
     const relatedTasks = await dbAll(`
       SELECT COUNT(*) as count FROM tasks_v3 
-      WHERE created_by = ? OR production_leader = ? OR executor = ? OR forwarded_to = ?
-    `, [userId, userId, userId, userId]);
+      WHERE created_by = ? OR production_leader = ? OR executor = ?
+    `, [userId, userId, userId]);
 
     if (relatedTasks[0].count > 0) {
       return res.status(400).json({ 
@@ -570,9 +674,9 @@ app.put('/api/milestones/:id/status', authenticateToken, async (req, res) => {
         return res.status(403).json({ message: '权限不足，无法更新此里程碑状态' });
     }
     
-    let updateQuery = 'UPDATE milestones SET status = ?, updated_at = CURRENT_TIMESTAMP';
+    let updateQuery = 'UPDATE milestones SET status = ?, updated_at = ?';
     let queryParams = [status];
-    const now = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    const now = getLocalDateTime();
     
     if (status === MILESTONE_STATUS.COMPLETED) {
       updateQuery += ', actual_completion_date = ?';
@@ -584,6 +688,7 @@ app.put('/api/milestones/:id/status', authenticateToken, async (req, res) => {
     }
     
     updateQuery += ' WHERE id = ?';
+    queryParams.push(now); // 添加updated_at的值
     queryParams.push(milestoneId);
     
     await dbRun(updateQuery, queryParams);
@@ -647,9 +752,9 @@ app.put('/api/milestones/:id', authenticateToken, async (req, res) => {
 
     await dbRun(`
       UPDATE milestones 
-      SET name = ?, description = ?, planned_date = ?, updated_at = CURRENT_TIMESTAMP
+      SET name = ?, description = ?, planned_date = ?, updated_at = ?
       WHERE id = ?
-    `, [name, description || '', planned_date, milestoneId]);
+    `, [name, description || '', planned_date, getLocalDateTime(), milestoneId]);
     
     res.json({ message: '里程碑更新成功' });
   } catch (error) {
@@ -677,36 +782,346 @@ app.delete('/api/milestones/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// 生产所领导确认收到任务
-app.put('/api/tasks/:id/acknowledge', authenticateToken, async (req, res) => {
+// 分配任务给执行人的API (V3)
+app.put('/api/tasks/:id/assign', authenticateToken, async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    const { executor_id } = req.body;
+    const currentUser = await dbGet('SELECT * FROM users_v3 WHERE id = ?', [req.user.userId]);
+    const task = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
+
+    if (!task) {
+      return res.status(404).json({ message: '任务不存在' });
+    }
+
+    // 权限检查：只有管理员、生产调度员或该任务的"生产所领导"可以分配任务
+    if (currentUser.identity === IDENTITIES.ADMIN || currentUser.identity === IDENTITIES.PRODUCTION_SCHEDULER || task.production_leader === currentUser.id) {
+      if (task.status !== TASK_STATUS.PENDING) {
+        return res.status(400).json({ message: '只能分配待处理状态的任务' });
+      }
+
+      if (!executor_id) {
+        return res.status(400).json({ message: '执行人ID不能为空' });
+      }
+
+      // 检查执行人是否存在
+      const executorUser = await dbGet('SELECT id, name FROM users_v3 WHERE id = ?', [executor_id]);
+      if (!executorUser) {
+        return res.status(400).json({ message: '指定的执行人用户不存在' });
+      }
+
+      // 更新任务的执行人、状态和更新时间
+      await dbRun(
+        'UPDATE tasks_v3 SET executor = ?, status = ?, updated_at = ? WHERE id = ?',
+        [executor_id, TASK_STATUS.IN_PROGRESS, getLocalDateTime(), taskId]
+      );
+
+      // 获取更新后的任务信息返回
+      const updatedTask = await dbGet(`
+        SELECT 
+          t.*,
+          u1.name as created_by_name,
+          u2.name as production_leader_name,
+          u3.name as executor_name
+        FROM tasks_v3 t
+        LEFT JOIN users_v3 u1 ON t.created_by = u1.id
+        LEFT JOIN users_v3 u2 ON t.production_leader = u2.id
+        LEFT JOIN users_v3 u3 ON t.executor = u3.id
+        WHERE t.id = ?
+      `, [taskId]);
+      
+      res.json({ message: '任务分配成功', task: updatedTask });
+    } else {
+      return res.status(403).json({ message: '只有管理员、生产调度员或该任务的"生产所领导"可以分配任务' });
+    }
+
+  } catch (error) {
+    console.error('分配任务错误:', error);
+    res.status(500).json({ message: '分配任务失败' });
+  }
+});
+
+// 执行人完成任务的API (V3)
+app.post('/api/tasks/:id/complete', authenticateToken, async (req, res) => {
+  const taskId = req.params.id;
+  const userId = req.user.userId;
+  const { receipt_content } = req.body;
+
+  if (!receipt_content) {
+    return res.status(400).json({ message: '任务回执内容不能为空' });
+  }
+
+  try {
+    const task = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
+    if (!task) {
+      return res.status(404).json({ message: '任务不存在' });
+    }
+    if (task.executor !== userId) {
+      return res.status(403).json({ message: '您不是此任务的执行人' });
+    }
+
+    // 检查是否逾期完成 - 使用本地日期比较
+    const localDate = getLocalDate();
+    const isOverdue = new Date(localDate) > new Date(task.planned_end_date);
+
+    console.log('完成任务逾期检查:', {
+      taskId,
+      localDate,
+      plannedEndDate: task.planned_end_date,
+      isOverdue
+    });
+
+    // 自动完成所有未完成的里程碑
+    const currentTime = getLocalDateTime();
+    await dbRun(`
+      UPDATE milestones 
+      SET status = 'completed', actual_completion_date = ?, updated_at = ?
+      WHERE task_id = ? AND status != 'completed'
+    `, [currentTime, currentTime, taskId]);
+
+    // 更新任务状态为已完成
+    await dbRun(`
+      UPDATE tasks_v3 
+      SET status = ?, actual_end_date = ?, completed_overdue = ?, updated_at = ?
+      WHERE id = ?
+    `, [TASK_STATUS.COMPLETED, currentTime, isOverdue ? 1 : 0, currentTime, taskId]);
+
+    // 插入任务回执
+    await dbRun(
+      'INSERT INTO task_receipts (task_id, executor_id, receipt_content, submitted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [taskId, userId, receipt_content, currentTime, currentTime, currentTime]
+    );
+    
+    const updatedTask = await dbGet(`
+      SELECT 
+        t.*,
+        u1.name as created_by_name,
+        u2.name as production_leader_name,
+        u3.name as executor_name
+      FROM tasks_v3 t
+      LEFT JOIN users_v3 u1 ON t.created_by = u1.id
+      LEFT JOIN users_v3 u2 ON t.production_leader = u2.id
+      LEFT JOIN users_v3 u3 ON t.executor = u3.id
+      WHERE t.id = ?
+    `, [taskId]);
+
+    res.json({ message: '任务完成', task: updatedTask });
+  } catch (error) {
+    console.error('完成任务错误:', error);
+    res.status(500).json({ message: '完成任务失败' });
+  }
+});
+
+// 提交任务回执 - 执行人完成任务时填写回执
+app.post('/api/tasks/:id/receipt', authenticateToken, async (req, res) => {
   try {
     const taskId = req.params.id;
     const userId = req.user.userId;
-    console.log(`[ACK TASK /api/tasks/${taskId}/acknowledge] User ID: ${userId} attempting to acknowledge.`);
+    const { receipt_content, completion_notes } = req.body;
 
-    const task = await dbGet('SELECT id, production_leader FROM tasks_v3 WHERE id = ?', [taskId]);
+    if (!receipt_content) {
+      return res.status(400).json({ message: '回执内容不能为空' });
+    }
+
+    // 获取任务信息
+    const task = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
     if (!task) {
-      console.log(`[ACK TASK] Task not found for ID: ${taskId}`);
       return res.status(404).json({ message: '任务不存在' });
     }
-    console.log(`[ACK TASK] Task found: ${JSON.stringify(task)}. Expected leader ID: ${task.production_leader}`);
 
-    if (task.production_leader !== userId) {
-      console.log(`[ACK TASK] Permission denied. Task leader ID ${task.production_leader} does not match user ID ${userId}.`);
-      return res.status(403).json({ message: '权限不足，只有指定的生产所领导可以确认收到任务' });
+    // 权限检查：只有任务执行人可以提交回执
+    if (task.executor !== userId) {
+      return res.status(403).json({ message: '只有任务执行人可以提交回执' });
     }
 
-    const now = new Date().toISOString();
-    console.log(`[ACK TASK] Attempting to update task ${taskId} with acknowledged_by_leader_at = ${now}`);
-    await dbRun('UPDATE tasks_v3 SET acknowledged_by_leader_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [now, taskId]);
+    // 创建回执记录
+    const currentTime = getLocalDateTime();
+    const result = await dbRun(`
+      INSERT INTO task_receipts (task_id, executor_id, receipt_content, completion_notes, submitted_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [taskId, userId, receipt_content, completion_notes || '', currentTime, currentTime, currentTime]);
 
-    const updatedTask = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
-    console.log(`[ACK TASK] Task ${taskId} acknowledged successfully. Updated task: ${JSON.stringify(updatedTask)}`);
-    res.json({ message: '任务已成功确认为收到', task: updatedTask });
+    // 自动完成所有未完成的里程碑
+    await dbRun(`
+      UPDATE milestones 
+      SET status = 'completed', actual_completion_date = ?, updated_at = ?
+      WHERE task_id = ? AND status != 'completed'
+    `, [currentTime, currentTime, taskId]);
+
+    // 同时将任务状态更新为已完成
+    const localDate = getLocalDate();
+    const isOverdue = new Date(localDate) > new Date(task.planned_end_date);
+    
+    await dbRun(`
+      UPDATE tasks_v3 
+      SET status = ?, actual_end_date = ?, completed_overdue = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [TASK_STATUS.COMPLETED, localDate, isOverdue ? 1 : 0, taskId]);
+
+    res.json({ 
+      message: '任务回执提交成功，任务已标记为完成', 
+      receiptId: result.lastInsertRowid 
+    });
 
   } catch (error) {
-    console.error(`[ACK TASK ERROR /api/tasks/${req.params.id}/acknowledge]`, error);
-    res.status(500).json({ message: '确认收到任务失败' });
+    console.error('提交任务回执错误:', error);
+    res.status(500).json({ message: '提交任务回执失败' });
+  }
+});
+
+// 获取任务回执
+app.get('/api/tasks/:id/receipts', authenticateToken, async (req, res) => {
+  try {
+    const taskId = req.params.id;
+
+    const receipts = await dbAll(`
+      SELECT 
+        tr.*,
+        u.name as executor_name
+      FROM task_receipts tr
+      LEFT JOIN users_v3 u ON tr.executor_id = u.id
+      WHERE tr.task_id = ?
+      ORDER BY tr.submitted_at DESC
+    `, [taskId]);
+
+    res.json(receipts);
+
+  } catch (error) {
+    console.error('获取任务回执错误:', error);
+    res.status(500).json({ message: '获取任务回执失败' });
+  }
+});
+
+// 复制任务 - 生产调度复制已有任务创建新任务
+app.post('/api/tasks/:id/copy', authenticateToken, async (req, res) => {
+  try {
+    const sourceTaskId = req.params.id;
+    const userId = req.user.userId;
+    const { name, planned_start_date, planned_end_date, production_leader } = req.body;
+
+    // 权限检查：只有生产调度和管理员可以复制任务
+    const currentUser = await dbGet('SELECT identity FROM users_v3 WHERE id = ?', [userId]);
+    if (currentUser.identity !== IDENTITIES.PRODUCTION_SCHEDULER && currentUser.identity !== IDENTITIES.ADMIN) {
+      return res.status(403).json({ message: '只有生产调度和管理员可以复制任务' });
+    }
+
+    // 获取源任务信息
+    const sourceTask = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [sourceTaskId]);
+    if (!sourceTask) {
+      return res.status(404).json({ message: '源任务不存在' });
+    }
+
+    if (!name || !planned_start_date || !planned_end_date) {
+      return res.status(400).json({ message: '任务名称和计划时间不能为空' });
+    }
+
+    const now = getLocalDateTime();
+
+    // 创建新任务
+    const result = await dbRun(`
+      INSERT INTO tasks_v3 (
+        name, description, type, created_by, production_leader, 
+        planned_start_date, planned_end_date, actual_start_date, 
+        status, is_copied_from
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      name, 
+      sourceTask.description, 
+      sourceTask.type, 
+      userId, 
+      production_leader || sourceTask.production_leader,
+      planned_start_date, 
+      planned_end_date, 
+      now,
+      TASK_STATUS.IN_PROGRESS, 
+      sourceTaskId
+    ]);
+
+    const newTaskId = result.lastInsertRowid;
+
+    // 复制里程碑
+    const sourceMilestones = await dbAll('SELECT * FROM milestones WHERE task_id = ? ORDER BY order_index', [sourceTaskId]);
+    for (const milestone of sourceMilestones) {
+      await dbRun(`
+        INSERT INTO milestones (task_id, name, description, planned_date, order_index)
+        VALUES (?, ?, ?, ?, ?)
+      `, [newTaskId, milestone.name, milestone.description, milestone.planned_date, milestone.order_index]);
+    }
+
+    res.json({ 
+      message: '任务复制成功', 
+      taskId: newTaskId,
+      copiedMilestones: sourceMilestones.length
+    });
+
+  } catch (error) {
+    console.error('复制任务错误:', error);
+    res.status(500).json({ message: '复制任务失败' });
+  }
+});
+
+// 生产所领导确认任务完成
+app.post('/api/tasks/:id/complete-by-leader', authenticateToken, async (req, res) => {
+  try {
+    const taskId = req.params.id;
+    const currentUser = await dbGet('SELECT * FROM users_v3 WHERE id = ?', [req.user.userId]);
+    const task = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
+
+    if (!task) {
+      return res.status(404).json({ message: '任务不存在' });
+    }
+
+    if (currentUser.id !== task.production_leader) {
+      return res.status(403).json({ message: '只有生产所领导可以确认完成任务' });
+    }
+
+    if (task.status !== TASK_STATUS.IN_PROGRESS && task.status !== TASK_STATUS.PENDING) {
+      return res.status(400).json({ message: '只能对待处理或进行中的任务进行确认完成' });
+    }
+
+    const now = getLocalDateTime();
+    const localDate = getLocalDate();
+    const isOverdue = new Date(localDate) > new Date(task.planned_end_date);
+    const actualStartDate = task.actual_start_date ? task.actual_start_date : now;
+
+    await dbRun(
+      'UPDATE tasks_v3 SET status = ?, actual_start_date = ?, actual_end_date = ?, completed_overdue = ?, completed_by_leader_at = ?, updated_at = ? WHERE id = ?',
+      [TASK_STATUS.COMPLETED, actualStartDate, localDate, isOverdue ? 1 : 0, now, now, taskId]
+    );
+
+    const updatedTask = await dbGet('SELECT * FROM tasks_v3 WHERE id = ?', [taskId]);
+    res.json({ message: '任务已由所领导确认完成', task: updatedTask });
+  } catch (error) {
+    console.error('所领导确认任务完成错误:', error);
+    res.status(500).json({ message: '所领导确认任务完成失败' });
+  }
+});
+
+// 获取子任务列表
+app.get('/api/tasks/:id/subtasks', authenticateToken, async (req, res) => {
+  try {
+    const parentTaskId = req.params.id;
+
+    const subtasks = await dbAll(`
+      SELECT 
+        t.*,
+        u1.name as created_by_name,
+        u2.name as production_leader_name,
+        u3.name as executor_name
+      FROM tasks_v3 t
+      LEFT JOIN users_v3 u1 ON t.created_by = u1.id
+      LEFT JOIN users_v3 u2 ON t.production_leader = u2.id
+      LEFT JOIN users_v3 u3 ON t.executor = u3.id
+      WHERE t.parent_task_id = ?
+      ORDER BY t.created_at ASC
+    `, [parentTaskId]);
+
+    res.json(subtasks);
+
+  } catch (error) {
+    console.error('获取子任务列表错误:', error);
+    res.status(500).json({ message: '获取子任务列表失败' });
   }
 });
 
@@ -721,9 +1136,9 @@ app.put('/api/user/profile', authenticateToken, async (req, res) => {
 
     await dbRun(`
       UPDATE users_v3 
-      SET name = ?, department = ?, email = ?, updated_at = CURRENT_TIMESTAMP
+      SET name = ?, department = ?, email = ?, updated_at = ?
       WHERE id = ?
-    `, [name, department, email, req.user.userId]);
+    `, [name, department, email, getLocalDateTime(), req.user.userId]);
 
     res.json({ message: '个人信息更新成功' });
   } catch (error) {
@@ -763,9 +1178,9 @@ app.put('/api/user/password', authenticateToken, async (req, res) => {
     
     await dbRun(`
       UPDATE users_v3 
-      SET password = ?, updated_at = CURRENT_TIMESTAMP
+      SET password = ?, updated_at = ?
       WHERE id = ?
-    `, [hashedNewPassword, req.user.userId]);
+    `, [hashedNewPassword, getLocalDateTime(), req.user.userId]);
 
     res.json({ message: '密码修改成功' });
   } catch (error) {
@@ -806,9 +1221,9 @@ app.put('/api/users/:id/reset-password', authenticateToken, async (req, res) => 
     
     await dbRun(`
       UPDATE users_v3 
-      SET password = ?, updated_at = CURRENT_TIMESTAMP
+      SET password = ?, updated_at = ?
       WHERE id = ?
-    `, [hashedNewPassword, targetUserId]);
+    `, [hashedNewPassword, getLocalDateTime(), targetUserId]);
 
     res.json({ message: `用户 ${targetUser.name} 的密码重置成功` });
   } catch (error) {

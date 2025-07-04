@@ -71,14 +71,17 @@ export interface Task {
   status: TaskStatus;
   created_by: number;
   production_leader?: number;
-  executor: number;
+  executor?: number; // 改为可选，生产调度创建时可能不指定
+  parent_task_id?: number; // 新增：父任务ID
   forwarded_to?: number;
   planned_start_date: string;
   planned_end_date: string;
   actual_start_date?: string;
   actual_end_date?: string;
   completed_overdue?: boolean; // 记录是否逾期完成
-  acknowledged_by_leader_at?: string; // New field
+  acknowledged_by_leader_at?: string;
+  completed_by_leader_at?: string; // 新增：生产所领导确认完成时间
+  is_copied_from?: number; // 新增：复制来源任务ID
   created_at: string;
   updated_at: string;
   created_by_name?: string;
@@ -88,6 +91,18 @@ export interface Task {
   milestones?: Milestone[];
   milestone_count?: number;
   completed_milestone_count?: number;
+  receipts?: TaskReceipt[];
+}
+
+// 新增：任务回执接口
+export interface TaskReceipt {
+  id: number;
+  task_id: number;
+  executor_id: number;
+  receipt_content: string;
+  completion_notes?: string;
+  submitted_at: string;
+  executor_name?: string;
 }
 
 export interface LoginRequest {
@@ -99,11 +114,38 @@ export interface CreateTaskRequest {
   name: string;
   description?: string;
   type: TaskType;
-  production_leader?: number;
-  executor: number;
+  production_leader: number; // 生产调度创建任务时必须指定生产所领导
+  executor?: number; // 改为可选，生产调度创建时不指定执行人
   planned_start_date: string;
   planned_end_date: string;
   milestones?: Milestone[];
+}
+
+// 新增：创建子任务请求
+export interface CreateSubtaskRequest {
+  name: string;
+  description?: string;
+  executor: number;
+  planned_end_date?: string;
+}
+
+// 新增：分配任务执行人请求
+export interface AssignTaskRequest {
+  executor: number;
+}
+
+// 新增：提交任务回执请求
+export interface SubmitReceiptRequest {
+  receipt_content: string;
+  completion_notes?: string;
+}
+
+// 新增：复制任务请求
+export interface CopyTaskRequest {
+  name: string;
+  planned_start_date: string;
+  planned_end_date: string;
+  production_leader?: number;
 }
 
 export interface CreateProjectRequest {

@@ -57,8 +57,7 @@ const initDatabaseV3 = () => {
     )
   `);
 
-  // 创建任务表V3 - 支持两级分配：生产所负责人和执行人
-  // actual_start_date and actual_end_date already exist.
+  // 创建任务表V3 - 重构支持新的工作流程
   db.exec(`
     CREATE TABLE IF NOT EXISTS tasks_v3 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,26 +67,43 @@ const initDatabaseV3 = () => {
       status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed')),
       created_by INTEGER NOT NULL,
       production_leader INTEGER,
-      executor INTEGER NOT NULL,
-      forwarded_to INTEGER,
+      executor INTEGER, -- 可以为空，生产调度创建任务时不指定执行人
+      parent_task_id INTEGER, -- 支持子任务，指向父任务ID
       planned_start_date DATE NOT NULL,
       planned_end_date DATE NOT NULL,
-      actual_start_date DATE,
+      actual_start_date DATE, -- 任务创建时自动设置
       actual_end_date DATE,
       completed_overdue BOOLEAN DEFAULT 0, -- 记录是否逾期完成
-      acknowledged_by_leader_at DATETIME, -- New field for leader acknowledgement
+      acknowledged_by_leader_at DATETIME, -- 生产所领导确认收到时间
+      completed_by_leader_at DATETIME, -- 生产所领导确认完成时间
+      is_copied_from INTEGER, -- 记录是否从其他任务复制而来
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (created_by) REFERENCES users_v3(id),
       FOREIGN KEY (production_leader) REFERENCES users_v3(id),
       FOREIGN KEY (executor) REFERENCES users_v3(id),
-      FOREIGN KEY (forwarded_to) REFERENCES users_v3(id)
+      FOREIGN KEY (parent_task_id) REFERENCES tasks_v3(id),
+      FOREIGN KEY (is_copied_from) REFERENCES tasks_v3(id)
     )
   `);
 
-  // 创建里程碑表 (Milestones Table) - if not already present from other scripts
-  // Assuming 'milestones' table might be created by 'create-milestone-table.js' or similar.
-  // For safety, we define it here with IF NOT EXISTS, including new fields.
+  // 创建任务回执表
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS task_receipts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      executor_id INTEGER NOT NULL,
+      receipt_content TEXT NOT NULL, -- 回执内容
+      completion_notes TEXT, -- 完成说明
+      submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (task_id) REFERENCES tasks_v3(id) ON DELETE CASCADE,
+      FOREIGN KEY (executor_id) REFERENCES users_v3(id)
+    )
+  `);
+
+  // 创建里程碑表 (Milestones Table)
   db.exec(`
     CREATE TABLE IF NOT EXISTS milestones (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -212,11 +228,71 @@ const addCompletedOverdueField = () => {
   }
 };
 
+// 添加任务管理重构相关的新字段和表
+const addTaskRefactorFields = () => {
+  try {
+    console.log('开始任务管理重构相关的数据库迁移...');
+    
+    // 检查tasks_v3表的字段
+    const tableInfo = db.prepare("PRAGMA table_info(tasks_v3)").all();
+    const existingColumns = tableInfo.map(col => col.name);
+    
+    // 添加parent_task_id字段（支持子任务）
+    if (!existingColumns.includes('parent_task_id')) {
+      console.log('添加parent_task_id字段...');
+      db.exec(`ALTER TABLE tasks_v3 ADD COLUMN parent_task_id INTEGER REFERENCES tasks_v3(id)`);
+    }
+    
+    // 添加completed_by_leader_at字段（生产所领导确认完成时间）
+    if (!existingColumns.includes('completed_by_leader_at')) {
+      console.log('添加completed_by_leader_at字段...');
+      db.exec(`ALTER TABLE tasks_v3 ADD COLUMN completed_by_leader_at DATETIME`);
+    }
+    
+    // 添加is_copied_from字段（记录任务复制来源）
+    if (!existingColumns.includes('is_copied_from')) {
+      console.log('添加is_copied_from字段...');
+      db.exec(`ALTER TABLE tasks_v3 ADD COLUMN is_copied_from INTEGER REFERENCES tasks_v3(id)`);
+    }
+    
+    // 修改executor字段允许为空（需要重建表，因为SQLite不支持修改约束）
+    // 这里我们检查是否已经允许为空，如果不是，我们需要重建表
+    const executorColumn = tableInfo.find(col => col.name === 'executor');
+    if (executorColumn && executorColumn.notnull === 1) {
+      console.log('修改executor字段允许为空...');
+      // 由于SQLite的限制，这里只是警告，实际部署时可能需要手动处理
+      console.warn('警告：executor字段仍为NOT NULL，新建任务时请确保生产调度指定生产所领导');
+    }
+    
+    // 创建任务回执表
+    console.log('创建task_receipts表...');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS task_receipts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        executor_id INTEGER NOT NULL,
+        receipt_content TEXT NOT NULL,
+        completion_notes TEXT,
+        submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (task_id) REFERENCES tasks_v3(id) ON DELETE CASCADE,
+        FOREIGN KEY (executor_id) REFERENCES users_v3(id)
+      )
+    `);
+    
+    console.log('任务管理重构数据库迁移完成');
+  } catch (error) {
+    console.error('任务管理重构数据库迁移失败:', error);
+  }
+};
+
 // 数据库迁移到V3
 const migrateToV3 = async () => {
   try {
     initDatabaseV3();
     addCompletedOverdueField(); // 添加新字段迁移
+    addTaskRefactorFields(); // 添加任务管理重构相关的新字段和表
     await insertInitialDataV3();
     console.log('数据库V3迁移完成！');
   } catch (error) {

@@ -9,7 +9,12 @@ import {
   CreateProjectRequest,
   CreateMilestoneRequest, 
   UpdateMilestoneRequest,
-  ApiResponse 
+  ApiResponse,
+  CreateSubtaskRequest,
+  AssignTaskRequest, 
+  SubmitReceiptRequest,
+  CopyTaskRequest,
+  TaskReceipt
 } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001/api';
@@ -166,9 +171,57 @@ export const taskAPI = {
     return response.data; // Backend now returns { message: string, task: Task }
   },
 
-  acknowledgeTask: async (taskId: number): Promise<{ message: string; task: Task }> => {
-    const response = await api.put(`/tasks/${taskId}/acknowledge`);
-    return response.data; // Backend returns { message: string, task: Task }
+  // 新增：创建子任务
+  createSubtasks: async (taskId: number, subtasks: CreateSubtaskRequest[]): Promise<ApiResponse> => {
+    const response = await api.post(`/tasks/${taskId}/subtasks`, { subtasks });
+    return response.data;
+  },
+
+  // 新增：分配任务执行人
+  assignTask: async (taskId: number, executorId: number): Promise<{ message: string; task: Task }> => {
+    const response = await api.put(`/tasks/${taskId}/assign`, { executor_id: executorId });
+    return response.data;
+  },
+
+  // 新增：提交任务回执
+  submitReceipt: async (taskId: number, receiptData: SubmitReceiptRequest): Promise<{ message: string; receiptId: number }> => {
+    const response = await api.post(`/tasks/${taskId}/receipt`, receiptData);
+    return response.data;
+  },
+
+  // 新增：获取任务回执
+  getTaskReceipts: async (taskId: number): Promise<TaskReceipt[]> => {
+    const response = await api.get(`/tasks/${taskId}/receipts`);
+    return response.data;
+  },
+
+  // 新增：复制任务
+  copyTask: async (taskId: number, copyData: CopyTaskRequest): Promise<{ message: string; taskId: number; copiedMilestones: number }> => {
+    const response = await api.post(`/tasks/${taskId}/copy`, copyData);
+    return response.data;
+  },
+
+  // 新增：生产所领导确认任务完成
+  completeByLeader: async (taskId: number): Promise<{ message: string; task: Task }> => {
+    const response = await api.put(`/tasks/${taskId}/complete-by-leader`);
+    return response.data;
+  },
+
+  // 新增：获取子任务列表
+  getSubtasks: async (taskId: number): Promise<Task[]> => {
+    const response = await api.get(`/tasks/${taskId}/subtasks`);
+    return response.data;
+  },
+
+  // 新增：获取生产所领导列表
+  getProductionLeaders: async (): Promise<User[]> => {
+    const response = await api.get('/users/production-leaders');
+    return response.data;
+  },
+
+  completeTask: async (taskId: number, receiptContent: string): Promise<{ message: string; task: Task }> => {
+    const response = await api.post(`/tasks/${taskId}/complete`, { receipt_content: receiptContent });
+    return response.data;
   },
 };
 

@@ -132,7 +132,7 @@ fi
 # 步骤6：安装服务器端依赖
 log_info "安装服务器端依赖..."
 cd "$DEPLOY_DIR/server"
-npm install --production
+npm install --production --registry=https://registry.npmmirror.com
 log_success "服务器端依赖安装完成"
 
 # 步骤7：安装客户端依赖

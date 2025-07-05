@@ -2,7 +2,9 @@ export enum UserIdentity {
   ADMIN = 'admin',
   PRODUCTION_SCHEDULER = 'production_scheduler',
   PRODUCTION_LEADER = 'production_leader',
-  STAFF = 'staff'
+  STAFF = 'staff',
+  DIRECTOR = 'director',
+  DEPUTY_CHIEF_ENGINEER = 'deputy_chief_engineer'
 }
 
 export enum TaskType {

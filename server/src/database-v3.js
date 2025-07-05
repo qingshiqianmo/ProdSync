@@ -12,7 +12,9 @@ const IDENTITIES = {
   ADMIN: 'admin',
   PRODUCTION_SCHEDULER: 'production_scheduler',
   PRODUCTION_LEADER: 'production_leader',
-  STAFF: 'staff'
+  STAFF: 'staff',
+  DIRECTOR: 'director',
+  DEPUTY_CHIEF_ENGINEER: 'deputy_chief_engineer'
 };
 
 // 任务类型常量
@@ -49,7 +51,7 @@ const initDatabaseV3 = () => {
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
       name TEXT NOT NULL,
-      identity TEXT NOT NULL CHECK (identity IN ('admin', 'production_scheduler', 'production_leader', 'staff')),
+      identity TEXT NOT NULL CHECK (identity IN ('admin', 'production_scheduler', 'production_leader', 'staff', 'director', 'deputy_chief_engineer')),
       department TEXT,
       email TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

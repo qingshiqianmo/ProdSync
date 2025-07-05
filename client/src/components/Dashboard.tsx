@@ -233,7 +233,10 @@ const Dashboard: React.FC = () => {
   };
 
   const getDataScopeDescription = () => {
-    if (user?.identity === UserIdentity.ADMIN || user?.identity === UserIdentity.PRODUCTION_SCHEDULER) {
+    if (user?.identity === UserIdentity.ADMIN || 
+        user?.identity === UserIdentity.PRODUCTION_SCHEDULER ||
+        user?.identity === UserIdentity.DIRECTOR ||
+        user?.identity === UserIdentity.DEPUTY_CHIEF_ENGINEER) {
       return "显示所有数据的统计信息";
     } else {
       return "显示与您相关数据的统计信息";
@@ -365,6 +368,8 @@ const Dashboard: React.FC = () => {
       case UserIdentity.PRODUCTION_SCHEDULER: return '生产调度员';
       case UserIdentity.PRODUCTION_LEADER: return '生产所领导';
       case UserIdentity.STAFF: return '职员';
+      case UserIdentity.DIRECTOR: return '院领导';
+      case UserIdentity.DEPUTY_CHIEF_ENGINEER: return '副总工';
       default: return identity;
     }
   };

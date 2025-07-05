@@ -138,7 +138,7 @@ log_success "服务器端依赖安装完成"
 # 步骤7：安装客户端依赖
 log_info "安装客户端依赖..."
 cd "$DEPLOY_DIR/client"
-npm install
+npm install --registry=https://registry.npmmirror.com
 log_success "客户端依赖安装完成"
 
 # 步骤8：配置API地址为相对路径

@@ -67,6 +67,8 @@ const UserManagement: React.FC = () => {
       case UserIdentity.PRODUCTION_SCHEDULER: return '生产调度员';
       case UserIdentity.PRODUCTION_LEADER: return '生产所领导';
       case UserIdentity.STAFF: return '职员';
+      case UserIdentity.DIRECTOR: return '院领导';
+      case UserIdentity.DEPUTY_CHIEF_ENGINEER: return '副总工';
       default: return identity;
     }
   };
@@ -77,6 +79,8 @@ const UserManagement: React.FC = () => {
       case UserIdentity.PRODUCTION_SCHEDULER: return 'blue';
       case UserIdentity.PRODUCTION_LEADER: return 'green';
       case UserIdentity.STAFF: return 'orange';
+      case UserIdentity.DIRECTOR: return 'purple';
+      case UserIdentity.DEPUTY_CHIEF_ENGINEER: return 'cyan';
       default: return 'default';
     }
   };
@@ -371,6 +375,8 @@ const UserManagement: React.FC = () => {
                   <Option value={UserIdentity.PRODUCTION_SCHEDULER}>生产调度员</Option>
                   <Option value={UserIdentity.PRODUCTION_LEADER}>生产所领导</Option>
                   <Option value={UserIdentity.STAFF}>职员</Option>
+                  <Option value={UserIdentity.DIRECTOR}>院领导</Option>
+                  <Option value={UserIdentity.DEPUTY_CHIEF_ENGINEER}>副总工</Option>
                 </Select>
               </Form.Item>
             </Col>
@@ -462,6 +468,8 @@ const UserManagement: React.FC = () => {
                   <Option value={UserIdentity.PRODUCTION_SCHEDULER}>生产调度员</Option>
                   <Option value={UserIdentity.PRODUCTION_LEADER}>生产所领导</Option>
                   <Option value={UserIdentity.STAFF}>职员</Option>
+                  <Option value={UserIdentity.DIRECTOR}>院领导</Option>
+                  <Option value={UserIdentity.DEPUTY_CHIEF_ENGINEER}>副总工</Option>
                 </Select>
               </Form.Item>
             </Col>
